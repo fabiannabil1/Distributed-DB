@@ -8,7 +8,6 @@
 
     @if ($items->isEmpty())
         <p class="text-gray-500">Keranjang kamu kosong.</p>
-        <a href="{{ route('produk.index') }}" class="text-blue-500 hover:underline">Kembali berbelanja</a>
     @else
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="md:col-span-2">
@@ -64,7 +63,7 @@
             </div>
         </div>
     @endif
-        <script>
+    <script>
         document.getElementById('btn-bayar').addEventListener('click', function(e) {
             e.preventDefault();
 
