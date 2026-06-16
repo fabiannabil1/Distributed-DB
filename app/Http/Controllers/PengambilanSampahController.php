@@ -25,18 +25,18 @@ class PengambilanSampahController extends Controller
             if ($pelanggan && $pelanggan->pengambilanSampah) {
                 $pengambilan = $pelanggan->pengambilanSampah;
 
-                // Tambah jumlah ember
+
                 $pengambilan->jumlah_ember += 1;
                 $pengambilan->save();
 
-                // Buat detail pengambilan
+
                 DetailPengambilanSampah::create([
                     'pengambilan_id' => $pengambilan->pengambilan_id,
                     'tanggal_pengambilan' => now(),
                     'admin_id' => Auth::guard('admin')->id(),
                 ]);
 
-                // Ubah status_penuh menjadi 'kosong' di tempat sampah
+
                 if ($pelanggan->tempatSampah) {
                     $pelanggan->tempatSampah->status_penuh = 'kosong';
                     $pelanggan->tempatSampah->save();

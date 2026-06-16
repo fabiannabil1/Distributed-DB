@@ -40,7 +40,7 @@ class AuthController extends Controller
     }
 
 
-       public function logout(Request $request)
+    public function logout(Request $request)
     {
         Auth::guard('admin')->logout();
         Auth::guard('pelanggan')->logout();

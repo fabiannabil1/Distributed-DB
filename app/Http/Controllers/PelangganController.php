@@ -6,7 +6,6 @@ use App\Models\Artikel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
-use App\Models\Pelanggan;
 
 
 class PelangganController extends Controller

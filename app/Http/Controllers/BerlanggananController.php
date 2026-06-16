@@ -52,12 +52,10 @@ class BerlanggananController extends Controller
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 
-        // Validasi dasar
         $request->validate([
             'order_id' => 'required|string',
         ]);
 
-        // Simpan ke tabel berlangganan
         Berlangganan::create([
             'pelanggan_id' => $user->pelanggan_id,
             'biaya_berlangganan' => 80000,
