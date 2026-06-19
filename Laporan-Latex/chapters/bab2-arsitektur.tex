@@ -1,0 +1,240 @@
+% ============================================================================
+% BAB II - ARSITEKTUR DAN TOPOLOGI SISTEM
+% ============================================================================
+\chapter{ARSITEKTUR DAN TOPOLOGI SISTEM}
+
+\section{Diagram Topologi Jaringan}
+
+Arsitektur sistem terdiri dari 5 (lima) \textit{node} utama yang
+berjalan di atas jaringan Docker \textit{bridge} dengan subnet
+\texttt{172.25.0.0/24}. Diagram pada Gambar~\ref{fig:topologi}
+menggambarkan hubungan antar \textit{node} beserta alamat IP, port
+layanan, dan arah komunikasi data yang telah dirancang. Setiap
+\textit{node} memiliki peran spesifik --- mulai dari \textit{client}
+browser, aplikasi Laravel, middleware Pgpool-II, hingga tiga
+\textit{backend} PostgreSQL (satu Master dan dua Replica). Jaringan
+Docker \textit{bridge} dipilih karena menyediakan isolasi jaringan
+internal yang aman dengan resolusi nama \textit{host} otomatis antar
+\textit{container}. Konfigurasi IP statis diterapkan untuk memastikan
+setiap \textit{node} selalu dapat dijangkau pada alamat yang konsisten
+meskipun terjadi restart \textit{container}.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=0.8cm,
+    box/.style={rectangle, draw=black!70, fill=white, rounded corners=2pt,
+                minimum width=3.2cm, minimum height=0.9cm, align=center,
+                font=\footnotesize\sffamily, blur shadow={shadow blur steps=4}},
+    titlebox/.style={rectangle, draw=black!40, fill=black!5, rounded corners=2pt,
+                     minimum width=3.2cm, minimum height=0.65cm, align=center,
+                     font=\footnotesize\bfseries\sffamily},
+    dbnode/.style={rectangle, draw=blue!60, fill=blue!3, rounded corners=2pt,
+                   minimum width=2.8cm, minimum height=0.85cm, align=center,
+                   font=\footnotesize\ttfamily},
+    arrow/.style={-{Stealth[scale=0.9]}, line width=0.7pt, draw=black!60},
+    writearrow/.style={-{Stealth[scale=0.9]}, line width=1.0pt, draw=red!70, thick},
+    readarrow/.style={-{Stealth[scale=0.9]}, line width=1.0pt, draw=green!50!black, thick},
+    replarrow/.style={-{Stealth[scale=0.9]}, line width=1.0pt, draw=blue!60, thick, dashed},
+    labeltext/.style={font=\footnotesize\sffamily, fill=white, inner sep=1pt},
+]
+
+% --- Client ---
+\node[box, minimum width=2cm] (client) at (0, 0) {Browser\\\scriptsize (Client)};
+
+% --- Laravel App ---
+\node[box, right=1.0cm of client] (app) {\textbf{Laravel App}\\bdt-app:80\\{\scriptsize 172.25.0.30}};
+
+% --- Pgpool-II ---
+\node[box, below=1.8cm of app, minimum height=1.2cm] (pgpool) {\textbf{Pgpool-II}\\pgpool:5432 (DB) / :9898 (PCP)\\{\scriptsize 172.25.0.20}};
+
+% --- Master ---
+\node[dbnode, below left=2.0cm and 0.3cm of pgpool] (master) {\underline{PostgreSQL}\\\underline{Master}\\pg-master:5432\\{\scriptsize 172.25.0.10}};
+
+% --- Replica 1 ---
+\node[dbnode, below=2.0cm of pgpool] (repl1) {\underline{PostgreSQL}\\\underline{Replica 1}\\pg-replica1:5432\\{\scriptsize 172.25.0.11}};
+
+% --- Replica 2 ---
+\node[dbnode, below right=2.0cm and 0.3cm of pgpool] (repl2) {\underline{PostgreSQL}\\\underline{Replica 2}\\pg-replica2:5432\\{\scriptsize 172.25.0.12}};
+
+% --- Arrows: Client to App ---
+\draw[arrow] (client.east) -- (app.west) node[labeltext, midway, above] {\scriptsize HTTP :8080};
+
+% --- Arrow: App to Pgpool ---
+\draw[arrow] (app.south) -- ++(0, -0.15) -| (pgpool.north) node[labeltext, pos=0.6, above right] {\scriptsize DB Connection};
+
+% --- Arrow: Pgpool to Master (WRITE) ---
+\draw[writearrow] (pgpool.south west) -- ++(-0.3, -0.2) |- (master.north) node[labeltext, midway, left] {\scriptsize WRITE};
+
+% --- Arrow: Pgpool to Replica 1 (READ) ---
+\draw[readarrow] (pgpool.south) -- (repl1.north) node[labeltext, midway, right] {\scriptsize READ};
+
+% --- Arrow: Pgpool to Replica 2 (READ) ---
+\draw[readarrow] (pgpool.south east) -- ++(0.3, -0.2) |- (repl2.north) node[labeltext, midway, right] {\scriptsize READ};
+
+% --- Arrows: Master to Replicas (Streaming Replication) ---
+\draw[replarrow] (master.east) -- ++(0.6, 0) |- (repl1.west) node[labeltext, midway, above, rotate=90] {\scriptsize Streaming Replication};
+\draw[replarrow] (repl1.east) -- (repl2.west) node[labeltext, midway, above] {\scriptsize Streaming Replication};
+
+% --- Host boundary ---
+\node[draw=black!30, dashed, rounded corners=5pt, fit=(client)(app)(pgpool)(master)(repl1)(repl2),
+      inner sep=0.5cm, label={[font=\footnotesize\sffamily]north east:{\scriptsize Host Machine (Docker)}}] (host) {};
+
+\end{tikzpicture}
+}
+\caption{Diagram Topologi Jaringan Sistem \textit{Read-Write Splitting}}
+\label{fig:topologi}
+\end{figure}
+
+\subsection{Alamat IP dan Port Layanan}
+
+Tabel~\ref{tab:network} merinci alamat IP dan port setiap
+\textit{node} dalam arsitektur. Setiap \textit{container} memiliki dua
+port: port internal yang digunakan untuk komunikasi antar
+\textit{container} dalam jaringan Docker, dan port \textit{host} yang
+dipetakan untuk akses dari luar (digunakan selama pengembangan dan
+pengujian). Aplikasi Laravel diekspos pada port host 8080 yang
+dipetakan ke port 80 internal Nginx di dalam \textit{container}.
+Pgpool-II membuka dua port: 5432 untuk koneksi database PostgreSQL dan
+9898 untuk antarmuka administrasi PCP (\textit{Pgpool Control
+Protocol}). Masing-masing PostgreSQL \textit{backend} diekspos pada
+port host yang berbeda (5433, 5434, 5435) untuk memungkinkan koneksi
+langsung saat debugging, meskipun dalam operasi normal aplikasi hanya
+terhubung melalui Pgpool-II.
+
+\begin{table}[H]
+\centering
+\caption{Spesifikasi Jaringan Tiap Node}
+\label{tab:network}
+\begin{tabularx}{\textwidth}{l l l l l}
+\toprule
+\textbf{Komponen} & \textbf{Container} & \textbf{IP Address} &
+\textbf{Port (Host)} & \textbf{Port (Container)} \\
+\midrule
+Laravel App   & \texttt{bdt-app}     & 172.25.0.30 & 8080       & 80 \\
+Pgpool-II     & \texttt{pgpool}      & 172.25.0.20 & 5436, 9898 & 5432, 9898 \\
+PostgreSQL Master  & \texttt{pg-master}   & 172.25.0.10 & 5433       & 5432 \\
+PostgreSQL Replica 1 & \texttt{pg-replica1} & 172.25.0.11 & 5434    & 5432 \\
+PostgreSQL Replica 2 & \texttt{pg-replica2} & 172.25.0.12 & 5435    & 5432 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Arah Komunikasi Antar Server}
+
+Komunikasi antar \textit{node} mengikuti alur yang telah dirancang
+untuk memastikan pemisahan beban kerja dan keamanan data. Berikut
+adalah rincian arah komunikasi pada setiap jalur:
+
+\begin{enumerate}
+    \item \textbf{Client $\rightarrow$ Aplikasi (HTTP)}: Browser
+    mengakses aplikasi Laravel melalui port \texttt{8080} pada
+    \textit{host}. Permintaan HTTP ini kemudian diteruskan oleh Nginx
+    ke aplikasi Laravel melalui PHP-FPM yang dikelola Supervisor.
+    \item \textbf{Aplikasi $\rightarrow$ Pgpool-II (PostgreSQL Wire
+    Protocol)}: Seluruh koneksi database dari aplikasi diarahkan ke
+    Pgpool-II (172.25.0.20:5432), bukan langsung ke PostgreSQL Master.
+    Aplikasi tidak perlu mengetahui topology database di belakang
+    Pgpool-II karena middleware ini menangani seluruh logika routing
+    query secara transparan.
+    \item \textbf{Pgpool-II $\rightarrow$ PostgreSQL Master (WRITE)}:
+    Query \texttt{INSERT}, \texttt{UPDATE}, \texttt{DELETE} diteruskan
+    ke Master (172.25.0.10:5432). Pgpool-II mengenali jenis operasi
+    SQL dan mengarahkannya ke \textit{backend} 0 (Master) yang
+    memiliki flag \texttt{ALLOW\_TO\_FAILOVER}.
+    \item \textbf{Pgpool-II $\rightarrow$ PostgreSQL Replica (READ)}:
+    Query \texttt{SELECT} didistribusikan ke Replica 1
+    (172.25.0.11:5432) dan Replica 2 (172.25.0.12:5432) berdasarkan
+    \textit{weight} masing-masing. Dengan bobot yang sama (weight=1),
+    kedua Replica mendapat porsi query yang seimbang.
+    \item \textbf{Master $\rightarrow$ Replica (Streaming
+    Replication)}: Data WAL (\textit{Write-Ahead Log}) dikirim dari
+    Master ke kedua Replica secara \textit{streaming} untuk menjaga
+    sinkronisasi data. Setiap perubahan yang terjadi di Master akan
+    direplikasi ke Replica dalam waktu yang hampir \textit{real-time}.
+    \item \textbf{Pgpool-II $\rightarrow$ Semua Backend (Health
+    Check)}: Pgpool-II secara periodik memeriksa kesehatan setiap
+    \textit{backend} untuk memastikan ketersediaan layanan. Jika suatu
+    \textit{backend} gagal merespons setelah beberapa kali percobaan,
+    \textit{backend} tersebut akan di-\textit{detach} dari pool.
+\end{enumerate}
+
+\section{Spesifikasi Lingkungan (Environment)}
+
+Tabel~\ref{tab:environment} menjelaskan spesifikasi lingkungan
+pengembangan dan \textit{deployment} yang digunakan dalam
+implementasi. Seluruh komponen berjalan di atas Docker Engine pada
+sistem operasi Linux (Ubuntu 22.04). PostgreSQL 16 dipilih karena
+dukungan \textit{streaming replication} yang matang dan performa yang
+teruji pada beban kerja tinggi. Pgpool-II versi terbaru
+(\texttt{pgpool/pgpool:latest}) digunakan untuk memastikan
+kompatibilitas penuh dengan PostgreSQL 16. Aplikasi Laravel berjalan
+di atas PHP 8.2 dengan Nginx sebagai web server dan Supervisor sebagai
+process manager untuk menjaga proses tetap berjalan.
+
+\begin{table}[H]
+\centering
+\caption{Spesifikasi Lingkungan Pengembangan dan Deployment}
+\label{tab:environment}
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\textbf{Komponen} & \textbf{Spesifikasi} \\
+\midrule
+Operating System (Host)  & Ubuntu 22.04 / Linux (via Docker) \\
+Database                 & PostgreSQL 16 \\
+Middleware               & Pgpool-II 4.5
+                           (\texttt{pgpool/pgpool:latest}) \\
+Deployment               & Docker Compose v2+ (5 container) \\
+Bahasa Pemrograman       & PHP 8.2 \\
+Framework                & Laravel 10 \\
+Web Server               & Nginx (Alpine Linux) \\
+Process Manager          & Supervisor \\
+Network                  & Docker Bridge
+                           (\texttt{bdt-network}, 172.25.0.0/24) \\
+Replikasi                & PostgreSQL Streaming Replication
+                           (Async) \\
+Volume Persistence       & Docker Named Volumes
+                           (\texttt{pg\_master\_data},
+                            \texttt{pg\_replica1\_data},
+                            \texttt{pg\_replica2\_data}) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Struktur File Konfigurasi}
+
+Struktur direktori proyek diorganisasikan untuk memisahkan konfigurasi
+infrastruktur database dari kode aplikasi. Direktori
+\texttt{docker/} berisi seluruh konfigurasi yang spesifik untuk
+masing-masing layanan database, sementara direktori
+\texttt{PWEB-B1/} menyimpan kode aplikasi Laravel beserta konfigurasi
+\textit{deployment}-nya. Berikut adalah struktur direktori proyek yang
+relevan dengan konfigurasi basis data terdistribusi:
+
+{\footnotesize
+\begin{verbatim}
+BDT/
++-- docker-compose.yml                  # Orchestration semua service
++-- docker/
+|   +-- pg-master/
+|   |   +-- postgresql.conf             # Konfigurasi PostgreSQL Master
+|   |   +-- pg_hba.conf                 # Host-Based Authentication
+|   |   +-- init.sql                    # Inisialisasi user & role
+|   +-- pg-replica/
+|   |   +-- postgresql.conf             # Konfigurasi PostgreSQL Replica
+|   |   +-- entrypoint.sh               # Script pg_basebackup otomatis
+|   +-- pgpool/
+|       +-- pgpool.conf                 # Konfigurasi Pgpool-II
+|       +-- pool_hba.conf               # Autentikasi client Pgpool
+|       +-- pcp.conf                    # PCP admin user
++-- PWEB-B1/
+    +-- Dockerfile                      # Build image Laravel
+    +-- .env                            # Environment (DB_HOST=pgpool)
+    +-- .env.bdt                        # Environment Docker
+    +-- docker/
+    |   +-- nginx/default.conf          # Konfigurasi Nginx
+    |   +-- supervisor/supervisord.conf # Process manager
+    +-- config/database.php             # Konfigurasi koneksi database
+\end{verbatim}
+}

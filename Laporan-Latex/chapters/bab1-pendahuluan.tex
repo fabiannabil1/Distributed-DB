@@ -1,0 +1,151 @@
+% ============================================================================
+% BAB I - PENDAHULUAN
+% ============================================================================
+\chapter{PENDAHULUAN}
+
+\section{Latar Belakang}
+
+Perkembangan teknologi informasi yang pesat mendorong kebutuhan akan
+sistem yang mampu menangani volume data dan lalu lintas query yang
+tinggi secara efisien. Pada aplikasi \textit{e-commerce} dan sistem
+pengelolaan data seperti Komposin --- sebuah platform bank sampah dan
+\textit{e-commerce} pengelolaan sampah --- beban operasi \textit{read}
+(pembacaan data) umumnya jauh lebih tinggi dibandingkan operasi
+\textit{write} (penulisan data). Pengguna lebih sering melakukan
+pencarian produk, melihat katalog, membaca artikel, dan mengecek
+riwayat transaksi dibandingkan melakukan pembelian atau pendaftaran
+akun. Karakteristik beban kerja seperti ini lazim ditemukan pada
+hampir semua aplikasi web modern, di mana rasio \textit{read} terhadap
+\textit{write} dapat mencapai 80:20 atau bahkan 90:10. Oleh karena
+itu, strategi pengelolaan database perlu disesuaikan agar sumber daya
+komputasi dialokasikan secara proporsional terhadap jenis beban yang
+dominan.
+
+Apabila hanya menggunakan satu \textit{server} database (PostgreSQL
+\textit{single instance}), seluruh beban query --- baik \textit{read}
+maupun \textit{write} --- diproses oleh \textit{server} yang sama.
+Kondisi ini menimbulkan beberapa permasalahan, antara lain:
+
+\begin{enumerate}
+    \item \textbf{Bottleneck performa.} Ketika jumlah pengguna
+    meningkat, \textit{server} tunggal tidak mampu menangani lonjakan
+    query secara bersamaan, menyebabkan waktu respons yang lambat.
+    Pengguna akan merasakan halaman yang lama dimuat, terutama pada
+    jam-jam sibuk ketika banyak pengguna mengakses katalog dan
+    melakukan transaksi secara bersamaan. Kondisi ini dapat menurunkan
+    kepuasan pengguna dan berpotensi mengurangi pendapatan aplikasi.
+    \item \textbf{Tidak ada toleransi kesalahan (\textit{fault
+    tolerance}).} Jika \textit{server} database mengalami kegagalan
+    (\textit{down}), seluruh aplikasi berhenti beroperasi karena tidak
+    ada cadangan. Downtime yang terjadi dapat berlangsung dalam hitungan
+    menit hingga jam, tergantung pada kecepatan pemulihan server.
+    \item \textbf{Beban \textit{read} mengganggu operasi
+    \textit{write}.} Query \texttt{SELECT} yang berat (misalnya laporan
+    transaksi) dapat memperlambat query \texttt{INSERT/UPDATE} yang
+    membutuhkan komitmen data segera. Akibatnya, proses pembelian atau
+    pendaftaran pengguna baru dapat tertunda oleh query pembacaan yang
+    seharusnya tidak mendesak.
+\end{enumerate}
+
+Untuk mengatasi permasalahan tersebut, diterapkan arsitektur
+\textbf{\textit{read-write splitting}} dengan \textbf{replikasi
+database}. Mekanisme ini memisahkan query \textit{write}
+(\texttt{INSERT}, \texttt{UPDATE}, \texttt{DELETE}) yang dikirim ke
+\textbf{PostgreSQL Master}, dan query \textit{read} (\texttt{SELECT})
+yang didistribusikan ke satu atau lebih \textbf{PostgreSQL Replica}.
+Sebagai \textit{middleware} yang mengatur distribusi query, digunakan
+\textbf{Pgpool-II} --- sebuah \textit{connection pooler} dan
+\textit{load balancer} yang secara \textit{transparan} mengarahkan
+query ke \textit{backend} yang tepat berdasarkan jenis operasinya.
+Pgpool-II juga menyediakan mekanisme \textit{health check} dan
+\textit{failover} otomatis, sehingga jika salah satu Replica gagal,
+traffic akan dialihkan ke Replica lain tanpa mengganggu aplikasi.
+Keseluruhan arsitektur di-\textit{deploy} menggunakan Docker Compose
+untuk memastikan konsistensi lingkungan dan kemudahan replikasi
+konfigurasi.
+
+Dengan arsitektur ini, aplikasi Komposin diharapkan mampu menangani
+beban \textit{read} yang tinggi tanpa mengorbankan performa
+\textit{write}. Selain itu, sistem diharapkan tetap beroperasi
+meskipun salah satu \textit{replica} mengalami kegagalan
+(\textit{high availability}), karena Pgpool-II akan secara otomatis
+mengalihkan koneksi ke node yang masih sehat. Arsitektur ini juga
+memungkinkan distribusi beban query secara merata ke beberapa
+\textit{node} database melalui mekanisme \textit{load balancing}.
+Keempat, penggunaan \textit{connection pooling} mengurangi overhead
+pembukaan koneksi baru yang berulang. Kelima, pemisahan beban
+\textit{read} dan \textit{write} memungkinkan masing-masing server
+dioptimalkan secara independen sesuai perannya.
+
+\section{Ruang Lingkup Sistem}
+
+\subsection{Aplikasi yang Dibangun}
+
+Aplikasi Komposin adalah platform berbasis web yang dikembangkan
+menggunakan \textbf{Laravel 10} (PHP) dengan database
+\textbf{PostgreSQL 16}. Aplikasi ini memiliki dua peran pengguna:
+\textbf{Admin} dan \textbf{Pelanggan}, di mana Admin mengelola data
+produk, artikel, reward, transaksi, rute pengambilan sampah, serta
+laporan. Sementara itu, Pelanggan dapat melihat katalog produk,
+melakukan pembelian, menukarkan reward, melihat riwayat transaksi, dan
+berlangganan layanan pengambilan sampah. Seluruh fitur tersebut
+mengandalkan operasi database yang intensif, baik \textit{read}
+maupun \textit{write}, sehingga menjadi kandidat ideal untuk
+penerapan \textit{read-write splitting}. Aplikasi dikemas dalam
+container Docker yang berjalan di atas Nginx dan Supervisor untuk
+memastikan keandalan layanan.
+
+\subsection{Fitur Utama Aplikasi}
+
+\begin{itemize}
+    \item \textbf{Manajemen Katalog Produk.} Admin dapat menambah,
+    mengubah, dan menghapus produk. Pelanggan dapat melihat daftar
+    produk. Fitur ini didominasi oleh operasi \texttt{SELECT} yang
+    tinggi, terutama saat banyak pengguna menjelajahi katalog secara
+    bersamaan.
+    \item \textbf{Manajemen Transaksi.} Pelanggan melakukan pembelian
+    produk melalui keranjang belanja dan \textit{check-out}. Admin
+    mengelola status transaksi. Setiap transaksi melibatkan kombinasi
+    query \texttt{INSERT} (membuat pesanan) dan \texttt{SELECT}
+    (memvalidasi stok dan data pelanggan).
+    \item \textbf{Manajemen Reward.} Pelanggan menukarkan poin dengan
+    reward, dan Admin mengonfirmasi penukaran reward. Proses ini
+    memerlukan validasi saldo poin melalui \texttt{SELECT} dan
+    pencatatan penukaran melalui \texttt{INSERT}.
+    \item \textbf{Manajemen Artikel.} Admin membuat dan mengelola
+    artikel edukasi seputar pengelolaan sampah. Pelanggan membaca
+    artikel yang mayoritas hanya memerlukan operasi \texttt{SELECT}.
+    \item \textbf{Berlangganan.} Pelanggan dapat berlangganan layanan
+    pengambilan sampah berkala. Sistem mencatat jadwal dan status
+    berlangganan melalui operasi \texttt{INSERT} dan \texttt{UPDATE}.
+    \item \textbf{Pelaporan.} Admin melihat laporan transaksi dan
+    penghasilan dari layanan berlangganan. Laporan melibatkan query
+    \texttt{SELECT} agregat yang kompleks dan berpotensi membebani
+    database.
+    \item \textbf{Pengambilan Sampah.} Pelanggan menjadwalkan
+    pengambilan sampah dan mendapatkan poin sebagai imbalan. Fitur ini
+    melibatkan pencatatan jadwal (\texttt{INSERT}) dan pembaruan poin
+    (\texttt{UPDATE}).
+\end{itemize}
+
+\subsection{Batasan Implementasi Sistem}
+
+Batasan implementasi pada final project ini ditetapkan untuk menjaga
+fokus dan kelayakan teknis dalam lingkup mata kuliah Basis Data
+Terdistribusi. Sistem menggunakan \textbf{1 (satu) PostgreSQL Master}
+sebagai \textit{node} utama yang menerima seluruh operasi
+\textit{write}, serta \textbf{2 (dua) PostgreSQL Replica} sebagai
+\textit{node} pembaca yang menerima operasi \textit{read}. Satu
+\textbf{Pgpool-II} berperan sebagai \textit{middleware} pengatur
+\textit{connection pooling}, \textit{load balancing}, dan
+\textit{read-write splitting}. Seluruh layanan di-\textit{deploy}
+menggunakan \textbf{Docker Compose} dalam satu \textit{host} dengan
+jaringan \textit{bridge} internal, sehingga konfigurasi dapat
+direproduksi dengan mudah di lingkungan lain. Replikasi menggunakan
+metode \textbf{\textit{streaming replication}} secara
+\textbf{asinkron} yang sudah tersedia secara \textit{native} pada
+PostgreSQL 16. Aplikasi \textbf{tidak} terhubung langsung ke
+PostgreSQL Master maupun Replica --- seluruh koneksi database
+diarahkan ke Pgpool-II sebagai \textit{single entry point}.
+Pendekatan ini memastikan bahwa mekanisme \textit{read-write
+splitting} berjalan secara transparan tanpa modifikasi kode aplikasi.

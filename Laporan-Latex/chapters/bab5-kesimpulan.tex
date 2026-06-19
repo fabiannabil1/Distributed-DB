@@ -1,0 +1,218 @@
+% ============================================================================
+% BAB V - KESIMPULAN DAN KENDALA
+% ============================================================================
+\chapter{KESIMPULAN DAN KENDALA}
+
+\section{Kesimpulan}
+
+Berdasarkan implementasi dan pengujian yang telah dilakukan, dapat
+disimpulkan beberapa hal sebagai berikut:
+
+\subsection{Keberhasilan Implementasi Replikasi Database}
+
+Replikasi database PostgreSQL berhasil diimplementasikan menggunakan
+metode \textit{streaming replication} asinkron antara 1 (satu)
+PostgreSQL Master dan 2 (dua) PostgreSQL Replica. Konfigurasi meliputi
+pengaturan \texttt{wal\_level = replica},
+\texttt{max\_wal\_senders}, \texttt{hot\_standby}, serta pembuatan
+user replikasi \texttt{repluser} dengan hak akses
+\texttt{REPLICATION}. Inisialisasi Replica dilakukan secara otomatis
+melalui script \texttt{entrypoint.sh} yang menjalankan
+\texttt{pg\_basebackup} dengan flag \texttt{-R} untuk membuat
+\texttt{standby.signal} dan \texttt{primary\_conninfo}. Seluruh
+proses replikasi berjalan tanpa memerlukan intervensi manual setelah
+konfigurasi awal diterapkan. Kedua Replica berhasil melakukan
+sinkronisasi data dari Master secara kontinu melalui koneksi
+\textit{WAL sender} yang persisten. Dengan adanya dua Replica, sistem
+memiliki redundansi data yang memadai untuk mendukung mekanisme
+\textit{failover} ketika salah satu \textit{backend} mengalami
+gangguan.
+
+\subsection{Keberhasilan Mekanisme Read-Write Splitting}
+
+Mekanisme \textit{read-write splitting} berhasil diimplementasikan
+melalui Pgpool-II dengan konfigurasi
+\texttt{master\_slave\_mode = on},
+\texttt{load\_balance\_mode = on}, dan
+\texttt{master\_slave\_sub\_mode = 'stream'}. Hasil pengujian
+membuktikan bahwa seluruh query \textit{write} (\texttt{INSERT},
+\texttt{UPDATE}, \texttt{DELETE}) diproses oleh PostgreSQL Master,
+sementara seluruh query \textit{read} (\texttt{SELECT})
+didistribusikan ke PostgreSQL Replica. \textit{Load balancing}
+berjalan dengan baik --- masing-masing Replica mendapat porsi query
+\texttt{SELECT} yang seimbang sesuai bobot yang ditentukan
+(\texttt{backend\_weight = 1}). Master dengan bobot \texttt{0}
+sama sekali tidak menerima query \texttt{SELECT}, memastikan beban
+operasi \textit{read} tidak mengganggu operasi \textit{write}. Bukti
+log dari Pgpool-II (\texttt{log\_per\_node\_statement}) menunjukkan
+setiap statement SQL tercatat pada node yang tepat sesuai
+peruntukannya. Hal ini mengonfirmasi bahwa mekanisme \textit{routing}
+otomatis Pgpool-II berfungsi dengan benar tanpa kesalahan
+pengalihan query.
+
+\subsection{Manfaat Penggunaan Pgpool-II}
+
+Penggunaan Pgpool-II sebagai \textit{middleware} memberikan beberapa
+manfaat signifikan. Pertama, \textbf{\textit{Connection Pooling}}
+memungkinkan Pgpool-II mengelola \textit{pool} koneksi ke
+\textit{backend} PostgreSQL sehingga mengurangi \textit{overhead}
+pembukaan dan penutupan koneksi berulang yang dapat membebani server
+database. Kedua, \textbf{\textit{Transparent Read-Write Splitting}}
+membuat aplikasi tidak perlu memodifikasi kode untuk memisahkan query
+\textit{read} dan \textit{write} karena Pgpool-II secara otomatis
+mengarahkan query berdasarkan jenis operasi SQL. Ketiga,
+\textbf{\textit{Load Balancing}} mendistribusikan query
+\texttt{SELECT} ke beberapa Replica sehingga mencegah satu Replica
+menjadi \textit{bottleneck} ketika traffic tinggi. Keempat,
+\textbf{\textit{High Availability}} dijamin melalui mekanisme
+\textit{health check} dan \textit{failover} yang memastikan aplikasi
+tetap berjalan meskipun salah satu \textit{backend} mengalami
+kegagalan. Kelima, \textbf{\textit{Single Entry Point}}
+menyederhanakan konfigurasi koneksi karena aplikasi hanya perlu
+terhubung ke satu alamat (Pgpool-II) tanpa perlu mengetahui topologi
+database di belakangnya.
+
+\subsection{Peningkatan Efisiensi Distribusi Query Database}
+
+Dengan arsitektur \textit{read-write splitting}, beban query database
+terdistribusi secara signifikan. Master hanya menangani operasi
+\textit{write} (\texttt{INSERT}, \texttt{UPDATE}, \texttt{DELETE}),
+sehingga memiliki lebih banyak sumber daya untuk menjamin integritas
+data dan kecepatan komit transaksi. Sementara itu, Replica 1 dan
+Replica 2 menangani seluruh operasi \textit{read} (\texttt{SELECT}),
+yang merupakan mayoritas beban pada aplikasi \textit{e-commerce}
+seperti Komposin. Distribusi ini secara signifikan meningkatkan
+performa aplikasi karena operasi \textit{read} yang berat (seperti
+laporan transaksi, pencarian produk, dan tampilan katalog) tidak lagi
+membebani Master yang harus memproses operasi \textit{write} yang
+kritis. Pengujian juga menunjukkan bahwa penambahan Replica dapat
+dilakukan secara horizontal untuk meningkatkan kapasitas \textit{read}
+lebih lanjut tanpa memengaruhi konfigurasi Master.
+
+\section{Kendala dan Solusi}
+
+Selama proses implementasi, beberapa kendala teknis ditemukan dan
+diselesaikan. Berikut adalah kendala yang umum terjadi pada
+implementasi arsitektur sejenis beserta analisis penyebab dan
+solusinya:
+
+\subsection{Kendala yang Mungkin Ditemukan}
+
+\begin{enumerate}
+    \item \textbf{Koneksi Antar Container Gagal.} \textit{Container}
+    Pgpool-II tidak dapat terhubung ke PostgreSQL Master karena
+    perbedaan jaringan atau kesalahan \textit{hostname resolution}.
+    \begin{itemize}
+        \item \textbf{Penyebab:} \textit{Container} belum tergabung
+        dalam \textit{network} yang sama, atau \texttt{depends\_on}
+        belum memastikan Master siap menerima koneksi.
+        \item \textbf{Solusi:} Memastikan semua \textit{container}
+        menggunakan \texttt{bdt-network} yang sama, menambahkan
+        \texttt{healthcheck} pada Master, dan menggunakan
+        \texttt{depends\_on} dengan
+        \texttt{condition: service\_healthy}. Penggunaan IP statis
+        juga membantu menghindari masalah resolusi hostname.
+    \end{itemize}
+
+    \item \textbf{Replika Gagal Melakukan pg\_basebackup.}
+    \begin{itemize}
+        \item \textbf{Penyebab:} Master belum siap, user replikasi
+        belum dibuat, atau autentikasi ditolak oleh
+        \texttt{pg\_hba.conf}.
+        \item \textbf{Solusi:} Memastikan \texttt{init.sql} dijalankan
+        sebelum Replica mencoba koneksi, serta mengonfigurasi
+        \texttt{pg\_hba.conf} dengan baris
+        \texttt{host replication repluser 172.25.0.0/24 md5}. Script
+        \texttt{entrypoint.sh} juga perlu memeriksa keberadaan file
+        \texttt{replica\_initialized} untuk menghindari pengulangan
+        \texttt{pg\_basebackup} yang tidak perlu.
+    \end{itemize}
+
+    \item \textbf{Replikasi Tertunda (Replication Lag).}
+    \begin{itemize}
+        \item \textbf{Penyebab:} Beban \textit{write} yang tinggi atau
+        koneksi jaringan antar \textit{container} lambat.
+        \item \textbf{Solusi:} Meningkatkan \texttt{wal\_keep\_size}
+        pada Master dan \texttt{hot\_standby\_feedback = on} pada
+        Replica. Untuk kasus parah, mempertimbangkan
+        \textit{synchronous replication} dengan mengaktifkan
+        \texttt{synchronous\_standby\_names}.
+    \end{itemize}
+
+    \item \textbf{Port Database Terblokir Firewall Host.}
+    \begin{itemize}
+        \item \textbf{Penyebab:} Firewall \textit{host} (UFW/iptables)
+        memblokir port yang digunakan \textit{container}
+        (5433--5436).
+        \item \textbf{Solusi:} Menambahkan aturan \texttt{ufw allow}
+        untuk port yang diperlukan, atau menggunakan \texttt{expose}
+        saja tanpa \texttt{ports} di \texttt{docker-compose.yml} jika
+        akses hanya dibutuhkan antar \textit{container}.
+    \end{itemize}
+
+    \item \textbf{Kesalahan Konfigurasi pada pgpool.conf.}
+    \begin{itemize}
+        \item \textbf{Penyebab:} Kesalahan sintaks atau parameter
+        yang tidak sesuai versi Pgpool-II.
+        \item \textbf{Solusi:} Memvalidasi konfigurasi dengan membaca
+        log Pgpool-II (\texttt{docker compose logs pgpool}) dan
+        memastikan kompatibilitas parameter dengan versi image yang
+        digunakan. Environment variable di \texttt{docker-compose.yml}
+        juga perlu diperiksa karena di-\textit{override} ke
+        konfigurasi.
+    \end{itemize}
+
+    \item \textbf{Permission Denied pada File Konfigurasi.}
+    \begin{itemize}
+        \item \textbf{Penyebab:} File konfigurasi yang di-\textit{mount}
+        ke \textit{container} memiliki \textit{permission} yang tidak
+        sesuai.
+        \item \textbf{Solusi:} Mengatur \textit{permission} file
+        konfigurasi (misalnya \texttt{chmod 644}) atau menggunakan
+        \texttt{:ro} (\textit{read-only}) pada \textit{volume mount}
+        untuk mencegah modifikasi oleh \textit{container}.
+    \end{itemize}
+
+    \item \textbf{SELECT Query Tetap ke Master.}
+    \begin{itemize}
+        \item \textbf{Penyebab:} \texttt{backend\_weight0} tidak diset
+        ke \texttt{0} atau \texttt{load\_balance\_mode} tidak aktif.
+        \item \textbf{Solusi:} Memastikan
+        \texttt{PGPOOL\_PARAMS\_BACKEND\_WEIGHT0=0} dan
+        \texttt{PGPOOL\_PARAMS\_LOAD\_BALANCE\_MODE=on} di environment
+        Pgpool-II. Verifikasi dengan \texttt{SHOW pool\_nodes} untuk
+        melihat \texttt{select\_cnt} pada Master.
+    \end{itemize}
+
+    \item \textbf{Aplikasi Tidak Dapat Terhubung ke Database.}
+    \begin{itemize}
+        \item \textbf{Penyebab:} \texttt{DB\_HOST} mengarah langsung
+        ke Master, bukan ke Pgpool-II, atau konfigurasi
+        \texttt{pool\_hba.conf} menolak koneksi.
+        \item \textbf{Solusi:} Memastikan \texttt{DB\_HOST=pgpool} di
+        \texttt{.env} dan \texttt{pool\_hba.conf} mengizinkan koneksi
+        dari jaringan aplikasi. Koneksi dapat diuji dengan
+        \texttt{docker exec bdt-app php artisan tinker} dan
+        menjalankan query sederhana.
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Proses Analisis dan Penyelesaian Masalah}
+
+Pendekatan sistematis yang digunakan dalam menganalisis dan
+menyelesaikan kendala meliputi lima langkah utama. Pertama,
+\textbf{Analisis Log} dilakukan terhadap setiap layanan melalui
+\texttt{docker compose logs [service]} untuk mengidentifikasi akar
+permasalahan. Kedua, \textbf{Isolasi Masalah} dengan memeriksa apakah
+masalah berasal dari jaringan (uji \texttt{ping}), konfigurasi
+(validasi file \texttt{.conf}), autentikasi (periksa
+\texttt{pg\_hba.conf}), atau data. Ketiga, \textbf{Pengujian
+Bertahap} dilakukan dari layer terbawah (koneksi Master $\rightarrow$
+Replica) hingga teratas (Aplikasi $\rightarrow$ Pgpool-II) untuk
+mempersempit cakupan debugging. Keempat, \textbf{Verifikasi Manual}
+menggunakan \texttt{docker exec} untuk mengakses \textit{container}
+dan menjalankan perintah diagnostik seperti \texttt{ping},
+\texttt{psql}, dan \texttt{SHOW pool\_nodes}. Kelima,
+\textbf{Pencatatan Solusi} memastikan setiap solusi yang berhasil
+diterapkan didokumentasikan untuk referensi di masa mendatang dan
+mempercepat proses troubleshooting jika masalah serupa muncul kembali.

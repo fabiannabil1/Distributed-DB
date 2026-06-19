@@ -1,0 +1,212 @@
+services:
+  # ===================== PostgreSQL Master =====================
+  pg-master:
+    image: postgres:16
+    container_name: pg-master
+    hostname: pg-master
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: masterpass
+      POSTGRES_DB: bdt_app
+    volumes:
+      - pg_master_data:/var/lib/postgresql/data
+      - ./docker/pg-master/postgresql.conf:/etc/postgresql/custom/postgresql.conf:ro
+      - ./docker/pg-master/pg_hba.conf:/etc/postgresql/custom/pg_hba.conf:ro
+      - ./docker/pg-master/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "5433:5432"
+    networks:
+      bdt-network:
+        ipv4_address: 172.25.0.10
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/custom/postgresql.conf
+      -c hba_file=/etc/postgresql/custom/pg_hba.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bdt_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ===================== PostgreSQL Replica 1 =====================
+  pg-replica1:
+    image: postgres:16
+    container_name: pg-replica1
+    hostname: pg-replica1
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: replicapass
+      PGPASSWORD: replpassword
+    volumes:
+      - pg_replica1_data:/var/lib/postgresql/data
+      - ./docker/pg-replica/postgresql.conf:/etc/postgresql/custom/postgresql.conf:ro
+      - ./docker/pg-replica/entrypoint.sh:/entrypoint.sh:ro
+    ports:
+      - "5434:5432"
+    networks:
+      bdt-network:
+        ipv4_address: 172.25.0.11
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    depends_on:
+      pg-master:
+        condition: service_healthy
+
+  # ===================== PostgreSQL Replica 2 =====================
+  pg-replica2:
+    image: postgres:16
+    container_name: pg-replica2
+    hostname: pg-replica2
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: replicapass
+      PGPASSWORD: replpassword
+    volumes:
+      - pg_replica2_data:/var/lib/postgresql/data
+      - ./docker/pg-replica/postgresql.conf:/etc/postgresql/custom/postgresql.conf:ro
+      - ./docker/pg-replica/entrypoint.sh:/entrypoint.sh:ro
+    ports:
+      - "5435:5432"
+    networks:
+      bdt-network:
+        ipv4_address: 172.25.0.12
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    depends_on:
+      pg-master:
+        condition: service_healthy
+
+  # ===================== Pgpool-II =====================
+  pgpool:
+    image: pgpool/pgpool:latest@sha256:3782cbf9bb0c85db4a342b31abee2ef9051104b21487d82751c39262db881e17
+    container_name: pgpool
+    hostname: pgpool
+    restart: unless-stopped
+    environment:
+      # --- Core settings ---
+      PGPOOL_PARAMS_LISTEN_ADDRESSES: "*"
+      PGPOOL_PARAMS_PORT: "5432"
+      PGPOOL_PARAMS_PCP_LISTEN_ADDRESSES: "*"
+      PGPOOL_PARAMS_PCP_PORT: "9898"
+
+      # --- Backend 0: PostgreSQL Master ---
+      PGPOOL_PARAMS_BACKEND_HOSTNAME0: "pg-master"
+      PGPOOL_PARAMS_BACKEND_PORT0: "5432"
+      PGPOOL_PARAMS_BACKEND_WEIGHT0: "0"
+      PGPOOL_PARAMS_BACKEND_FLAG0: "ALLOW_TO_FAILOVER"
+
+      # --- Backend 1: PostgreSQL Replica 1 ---
+      PGPOOL_PARAMS_BACKEND_HOSTNAME1: "pg-replica1"
+      PGPOOL_PARAMS_BACKEND_PORT1: "5432"
+      PGPOOL_PARAMS_BACKEND_WEIGHT1: "1"
+      PGPOOL_PARAMS_BACKEND_FLAG1: "ALLOW_TO_FAILOVER"
+
+      # --- Backend 2: PostgreSQL Replica 2 ---
+      PGPOOL_PARAMS_BACKEND_HOSTNAME2: "pg-replica2"
+      PGPOOL_PARAMS_BACKEND_PORT2: "5432"
+      PGPOOL_PARAMS_BACKEND_WEIGHT2: "1"
+      PGPOOL_PARAMS_BACKEND_FLAG2: "ALLOW_TO_FAILOVER"
+
+      # --- Load Balancing & Read-Write Splitting ---
+      PGPOOL_PARAMS_LOAD_BALANCE_MODE: "on"
+      PGPOOL_PARAMS_MASTER_SLAVE_MODE: "on"
+      PGPOOL_PARAMS_MASTER_SLAVE_SUB_MODE: "stream"
+
+      # --- Streaming Replication Check ---
+      PGPOOL_PARAMS_SR_CHECK_PERIOD: "10"
+      PGPOOL_PARAMS_SR_CHECK_USER: "repluser"
+      PGPOOL_PARAMS_SR_CHECK_PASSWORD: "replpassword"
+      PGPOOL_PARAMS_SR_CHECK_DATABASE: "bdt_app"
+
+      # --- Health Check ---
+      PGPOOL_PARAMS_HEALTH_CHECK_PERIOD: "10"
+      PGPOOL_PARAMS_HEALTH_CHECK_TIMEOUT: "20"
+      PGPOOL_PARAMS_HEALTH_CHECK_USER: "repluser"
+      PGPOOL_PARAMS_HEALTH_CHECK_PASSWORD: "replpassword"
+      PGPOOL_PARAMS_HEALTH_CHECK_DATABASE: "bdt_app"
+      PGPOOL_PARAMS_HEALTH_CHECK_MAX_RETRIES: "3"
+      PGPOOL_PARAMS_HEALTH_CHECK_RETRY_DELAY: "1"
+
+      # --- Failover ---
+      PGPOOL_PARAMS_FAILOVER_ON_BACKEND_ERROR: "on"
+
+      # --- Logging (for proof of read-write splitting) ---
+      PGPOOL_PARAMS_LOG_CONNECTIONS: "on"
+      PGPOOL_PARAMS_LOG_DISCONNECTIONS: "on"
+      PGPOOL_PARAMS_LOG_STATEMENT: "on"
+      PGPOOL_PARAMS_LOG_PER_NODE_STATEMENT: "on"
+      PGPOOL_PARAMS_CLIENT_MIN_MESSAGES: "notice"
+
+      # --- Connection Pooling ---
+      PGPOOL_PARAMS_NUM_INIT_CHILDREN: "32"
+      PGPOOL_PARAMS_MAX_POOL: "4"
+      PGPOOL_PARAMS_CHILD_LIFE_TIME: "300"
+      PGPOOL_PARAMS_CHILD_MAX_CONNECTIONS: "0"
+      PGPOOL_PARAMS_CONNECTION_LIFE_TIME: "0"
+      PGPOOL_PARAMS_CLIENT_IDLE_LIMIT: "0"
+
+      # --- Authentication ---
+      DB_USERNAME: "bdtuser"
+      DB_PASSWORD: "bdtpassword"
+      PGPOOL_PCP_USER: "pcpuser"
+      PGPOOL_PCP_PASSWORD: "pcpadminpass"
+
+    ports:
+      - "5436:5432"
+      - "9898:9898"
+    volumes:
+      - ./docker/pgpool:/config
+    networks:
+      bdt-network:
+        ipv4_address: 172.25.0.20
+    depends_on:
+      pg-master:
+        condition: service_healthy
+      pg-replica1:
+        condition: service_started
+      pg-replica2:
+        condition: service_started
+
+  # ===================== Laravel Application =====================
+  app:
+    build:
+      context: ./PWEB-B1
+      dockerfile: Dockerfile
+    container_name: bdt-app
+    hostname: bdt-app
+    restart: unless-stopped
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8080
+      DB_CONNECTION: pgsql
+      DB_HOST: pgpool
+      DB_PORT: "5432"
+      DB_DATABASE: bdt_app
+      DB_USERNAME: bdtuser
+      DB_PASSWORD: bdtpassword
+    ports:
+      - "8080:80"
+    networks:
+      bdt-network:
+        ipv4_address: 172.25.0.30
+    depends_on:
+      pgpool:
+        condition: service_started
+
+networks:
+  bdt-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/24
+
+volumes:
+  pg_master_data:
+    driver: local
+  pg_replica1_data:
+    driver: local
+  pg_replica2_data:
+    driver: local

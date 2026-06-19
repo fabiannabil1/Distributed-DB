@@ -1,0 +1,492 @@
+% ============================================================================
+% BAB III - IMPLEMENTASI DAN KONFIGURASI
+% ============================================================================
+\chapter{IMPLEMENTASI DAN KONFIGURASI}
+
+Bab ini menjelaskan proses implementasi teknis meliputi konfigurasi
+replikasi PostgreSQL, konfigurasi Pgpool-II sebagai
+\textit{middleware}, serta integrasi aplikasi Laravel dengan
+Pgpool-II. Setiap bagian disertai potongan konfigurasi dan kode
+program beserta penjelasannya. Implementasi dilakukan secara bertahap
+dimulai dari penyiapan PostgreSQL Master, kemudian Replica, lalu
+Pgpool-II, dan terakhir integrasi dengan aplikasi. Seluruh konfigurasi
+mengacu pada file aktual yang digunakan dalam proyek dan telah
+diverifikasi berjalan pada lingkungan Docker Compose.
+
+\section{Konfigurasi Replication}
+
+Replikasi pada PostgreSQL dikonfigurasi menggunakan metode
+\textbf{\textit{streaming replication}} asinkron. Master mengirimkan
+data WAL (\textit{Write-Ahead Log}) ke setiap Replica secara
+\textit{streaming} untuk menjaga agar data di Replica tetap
+tersinkronisasi dengan Master. Konfigurasi melibatkan pengaturan pada
+file \texttt{postgresql.conf} dan \texttt{pg\_hba.conf} di sisi
+Master, serta \texttt{postgresql.conf} dan \texttt{entrypoint.sh} di
+sisi Replica. Metode asinkron dipilih karena memberikan performa tulis
+yang lebih tinggi dibandingkan replikasi sinkron, meskipun ada
+kemungkinan \textit{replication lag} kecil antara Master dan Replica.
+Untuk lingkungan pengembangan dan aplikasi \textit{e-commerce} yang
+tidak memerlukan konsistensi \textit{real-time} absolut, pendekatan
+ini sudah sangat memadai.
+
+\subsection{Konfigurasi PostgreSQL Master}
+
+\subsubsection{postgresql.conf --- Master}
+
+File konfigurasi utama Master terletak di
+\texttt{docker/pg-master/postgresql.conf}. Berikut adalah bagian
+konfigurasi yang relevan dengan replikasi:
+
+\begin{lstlisting}[caption={Konfigurasi Replikasi pada PostgreSQL Master
+(docker/pg-master/postgresql.conf)}, label={lst:master-conf}]
+# ===================== WAL (Write Ahead Log) =====================
+wal_level = replica             # Level minimal untuk streaming replication
+max_wal_senders = 10            # Maksimum koneksi replikasi bersamaan
+wal_keep_size = 512             # Retensi WAL dalam MB
+max_replication_slots = 10      # Maksimum replication slots
+
+# ===================== Synchronous Replication =====================
+synchronous_commit = on
+
+# ===================== Logging =====================
+log_statement = 'all'           # Mencatat semua query SQL (pembuktian)
+log_line_prefix = '[%t] [%d] [%u] [%h] %p '
+\end{lstlisting}
+
+\textbf{Penjelasan konfigurasi:}
+\begin{itemize}
+    \item \texttt{wal\_level = replica}: Mengatur level WAL ke
+    \texttt{replica} sebagai syarat minimal agar \textit{streaming
+    replication} dapat berjalan. Level ini memastikan data yang cukup
+    ditulis ke WAL untuk direplikasi, termasuk seluruh perubahan data
+    dan informasi transaksi yang dibutuhkan Replica.
+    \item \texttt{max\_wal\_senders = 10}: Menentukan jumlah maksimum
+    koneksi \textit{WAL sender} secara bersamaan. Setiap Replica
+    membutuhkan satu koneksi \textit{WAL sender} dari Master, sehingga
+    nilai 10 cukup untuk mendukung hingga 10 Replica atau proses
+    replikasi bersamaan lainnya.
+    \item \texttt{wal\_keep\_size = 512}: Menentukan ukuran retensi
+    file WAL dalam MB. Jika Replica tertinggal, WAL tetap disimpan
+    hingga batas ukuran ini agar Replica dapat mengejar
+    ketertinggalan tanpa perlu melakukan \texttt{pg\_basebackup}
+    ulang dari awal.
+    \item \texttt{max\_replication\_slots = 10}: Menentukan jumlah
+    maksimum \textit{replication slot} untuk memastikan Master tidak
+    menghapus WAL yang masih dibutuhkan oleh Replica. Slot replikasi
+    memberikan jaminan bahwa WAL akan dipertahankan sampai semua
+    Replica yang terdaftar telah mengonsumsinya.
+    \item \texttt{log\_statement = 'all'}: Mencatat seluruh query SQL
+    yang diterima Master. Digunakan sebagai bukti bahwa query
+    \textit{write} diproses oleh Master dalam pengujian nanti.
+\end{itemize}
+
+\subsubsection{pg\_hba.conf --- Master}
+
+File \texttt{docker/pg-master/pg\_hba.conf} mengatur autentikasi
+koneksi yang masuk ke Master. File ini sangat kritis karena kesalahan
+konfigurasi autentikasi akan menyebabkan Replica gagal terhubung dan
+Pgpool-II tidak dapat melakukan \textit{health check}. Berikut adalah
+konfigurasinya:
+
+\begin{lstlisting}[caption={Konfigurasi pg\_hba.conf Master
+(docker/pg-master/pg\_hba.conf)}, label={lst:master-hba}]
+# Allow application user & replication user from Docker network
+host    all             bdtuser     172.25.0.0/24    md5
+host    all             postgres    172.25.0.0/24    md5
+host    replication     repluser    172.25.0.0/24    md5
+host    all             repluser    172.25.0.0/24    md5
+
+# Allow Pgpool-II health check
+host    all             repluser    172.25.0.20/32    trust
+\end{lstlisting}
+
+\textbf{Penjelasan konfigurasi:}
+\begin{itemize}
+    \item Baris \texttt{replication} mengizinkan user
+    \texttt{repluser} melakukan koneksi replikasi dari seluruh
+    \textit{container} dalam subnet 172.25.0.0/24. Metode
+    \texttt{md5} memastikan bahwa password di-\textit{hash} selama
+    proses autentikasi.
+    \item Baris \textit{health check} mengizinkan Pgpool-II
+    (172.25.0.20) melakukan pengecekan kesehatan tanpa
+    \textit{password} (\texttt{trust}). Ini menyederhanakan koneksi
+    periodik yang dilakukan Pgpool-II setiap 10 detik tanpa overhead
+    autentikasi berulang.
+    \item Autentikasi untuk \texttt{bdtuser} (user aplikasi)
+    menggunakan metode \texttt{md5} untuk keamanan. Aplikasi Laravel
+    akan mengirimkan password yang di-\textit{hash} MD5 saat
+    menghubungi database melalui Pgpool-II.
+\end{itemize}
+
+\subsubsection{Pembuatan User Replikasi}
+
+User replikasi dibuat melalui file inisialisasi
+\texttt{docker/pg-master/init.sql} yang dijalankan otomatis saat
+\textit{container} PostgreSQL Master pertama kali dijalankan. File ini
+diekseskusi oleh mekanisme \texttt{/docker-entrypoint-initdb.d/}
+bawaan image PostgreSQL Docker. Selain membuat user aplikasi
+\texttt{bdtuser} dengan hak akses penuh, file ini juga membuat user
+replikasi \texttt{repluser} yang akan digunakan oleh Replica untuk
+melakukan \texttt{pg\_basebackup} dan \textit{streaming replication},
+serta oleh Pgpool-II untuk \textit{health check}.
+
+\begin{lstlisting}[language=SQL, caption={Inisialisasi User Replikasi
+dan Aplikasi (docker/pg-master/init.sql)}, label={lst:init-sql}]
+-- User aplikasi
+CREATE ROLE bdtuser WITH LOGIN PASSWORD 'bdtpassword';
+GRANT ALL PRIVILEGES ON DATABASE bdt_app TO bdtuser;
+
+-- User replikasi (digunakan replica dan Pgpool health check)
+CREATE ROLE repluser WITH LOGIN REPLICATION PASSWORD 'replpassword';
+GRANT CONNECT ON DATABASE bdt_app TO repluser;
+GRANT USAGE ON SCHEMA public TO repluser;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO repluser;
+\end{lstlisting}
+
+User \texttt{repluser} memiliki hak akses \texttt{REPLICATION} yang
+diperlukan untuk \textit{streaming replication} dan hak
+\texttt{SELECT} pada tabel untuk keperluan \textit{health check}
+Pgpool-II. Tanpa hak \texttt{SELECT} pada tabel, Pgpool-II tidak akan
+dapat memverifikasi bahwa database berfungsi dengan benar saat
+melakukan \textit{health check} periodik.
+
+\subsection{Konfigurasi PostgreSQL Replica}
+
+\subsubsection{postgresql.conf --- Replica}
+
+File konfigurasi Replica terletak di
+\texttt{docker/pg-replica/postgresql.conf}. Konfigurasi ini
+memfokuskan pada mode \textit{standby} yang memungkinkan Replica
+menerima koneksi \textit{read-only} sambil terus menerima dan
+mengaplikasikan WAL dari Master. Parameter \texttt{hot\_standby}
+adalah kunci yang membedakan \textit{warm standby} (tidak bisa
+melayani query) dengan \textit{hot standby} (bisa melayani query
+\texttt{SELECT}). Berikut adalah konfigurasinya:
+
+\begin{lstlisting}[caption={Konfigurasi PostgreSQL Replica
+(docker/pg-replica/postgresql.conf)}, label={lst:replica-conf}]
+# ===================== Replication (Standby) =====================
+wal_level = replica
+hot_standby = on                  # Izinkan query read-only saat recovery
+hot_standby_feedback = on         # Status replica dikirim ke master
+max_wal_senders = 10
+wal_receiver_timeout = 30s
+
+# Sertakan auto-generated config dari pg_basebackup -R
+# File ini berisi primary_conninfo untuk koneksi replikasi
+include_if_exists = '/var/lib/postgresql/data/postgresql.auto.conf'
+
+# ===================== Logging =====================
+log_statement = 'all'             # Catat semua query (pembuktian)
+log_line_prefix = '[%t] [%d] [%u] [%h] %p '
+\end{lstlisting}
+
+\textbf{Penjelasan konfigurasi:}
+\begin{itemize}
+    \item \texttt{hot\_standby = on}: Mengaktifkan mode
+    \textit{hot standby} sehingga Replica dapat melayani query
+    \texttt{SELECT} (read-only) selama proses \textit{recovery}
+    maupun saat berjalan normal. Tanpa parameter ini, Replica hanya
+    akan menjadi cadangan pasif yang tidak dapat melayani beban
+    \textit{read}.
+    \item \texttt{hot\_standby\_feedback = on}: Mengirimkan status
+    Replica ke Master, mencegah Master menghapus WAL yang masih
+    dibutuhkan Replica. Ini penting untuk menghindari konflik replikasi
+    di mana Master menghapus WAL sebelum Replica sempat
+    mengaplikasikannya.
+    \item \texttt{primary\_conninfo}: Parameter ini tidak ditulis
+    manual, melainkan dihasilkan otomatis oleh flag \texttt{-R} pada
+    perintah \texttt{pg\_basebackup} di \texttt{entrypoint.sh}.
+    Berisi informasi koneksi ke Master: \texttt{host=pg-master
+    port=5432 user=repluser password=replpassword}.
+    \item \texttt{log\_statement = 'all'}: Mencatat seluruh query SQL
+    yang diterima Replica. Digunakan sebagai bukti bahwa query
+    \textit{read} diproses oleh Replica dalam pengujian \textit{read-
+    write splitting}.
+\end{itemize}
+
+\subsubsection{Script Inisialisasi Replica (entrypoint.sh)}
+
+Setiap Replica diinisialisasi melalui script
+\texttt{docker/pg-replica/entrypoint.sh} yang melakukan
+\texttt{pg\_basebackup} dari Master. Script ini dirancang untuk
+menangani dua skenario: inisialisasi pertama (melakukan
+\texttt{pg\_basebackup}) dan restart (langsung menjalankan PostgreSQL
+karena data sudah ada). Sebuah file \textit{sentinel} bernama
+\texttt{replica\_initialized} digunakan untuk membedakan kedua
+skenario tersebut, sehingga \texttt{pg\_basebackup} tidak diulang
+setiap kali container direstart.
+
+\begin{lstlisting}[language=bash, caption={Script Inisialisasi Replica
+(docker/pg-replica/entrypoint.sh)}, label={lst:replica-entry}]
+# Run base backup dari Master
+export PGPASSWORD="replpassword"
+pg_basebackup \
+    -h pg-master \
+    -p 5432 \
+    -U repluser \
+    -D "$DATA_DIR" \
+    -Fp \
+    -Xs \
+    -P \
+    -R
+\end{lstlisting}
+
+\textbf{Penjelasan flag \texttt{pg\_basebackup}:}
+\begin{itemize}
+    \item \texttt{-h pg-master}: Hostname Master sebagai sumber data.
+    \item \texttt{-U repluser}: User dengan hak \texttt{REPLICATION}.
+    \item \texttt{-D \$(DATA\_DIR)}: Direktori tujuan data Replica.
+    \item \texttt{-Fp}: Format \textit{plain} (file biasa, bukan tar).
+    \item \texttt{-Xs}: Menggunakan \textit{streaming} untuk mengambil
+    WAL selama \textit{backup} berlangsung.
+    \item \texttt{-P}: Menampilkan progres.
+    \item \texttt{-R}: Membuat file \texttt{standby.signal} dan menulis
+    \texttt{primary\_conninfo} ke \texttt{postgresql.auto.conf} secara
+    otomatis.
+\end{itemize}
+
+\section{Konfigurasi Pgpool-II}
+
+Pgpool-II bertindak sebagai \textit{middleware} yang berada di antara
+aplikasi dan \textit{backend} PostgreSQL. Fungsinya mencakup tiga
+aspek utama: \textit{connection pooling} (mengelola dan menggunakan
+kembali koneksi ke backend), \textit{load balancing} (mendistribusikan
+query SELECT ke beberapa Replica), dan \textit{read-write splitting}
+(memisahkan query write ke Master dan query read ke Replica).
+Konfigurasi Pgpool-II disimpan di \texttt{docker/pgpool/pgpool.conf}
+dan beberapa parameter di-\textit{override} melalui \textit{environment
+variables} di \texttt{docker-compose.yml} untuk fleksibilitas.
+
+\subsection{Konfigurasi Backend}
+
+Bagian konfigurasi \textit{backend} mendefinisikan seluruh node
+PostgreSQL yang dikelola oleh Pgpool-II. Setiap \textit{backend}
+memiliki empat parameter utama: hostname, port, weight (bobot load
+balancing), dan flag. Urutan indeks backend (0, 1, 2) penting karena
+backend 0 secara default dianggap sebagai Master dalam mode
+\textit{streaming replication}. Berikut adalah konfigurasi backend:
+
+\begin{lstlisting}[caption={Konfigurasi Backend Pgpool-II
+(docker/pgpool/pgpool.conf)}, label={lst:pgpool-backend}]
+# Backend 0: PostgreSQL Master
+backend_hostname0 = 'pg-master'
+backend_port0 = 5432
+backend_weight0 = 0
+backend_flag0 = 'ALLOW_TO_FAILOVER'
+
+# Backend 1: PostgreSQL Replica 1
+backend_hostname1 = 'pg-replica1'
+backend_port1 = 5432
+backend_weight1 = 1
+backend_flag1 = 'ALLOW_TO_FAILOVER'
+
+# Backend 2: PostgreSQL Replica 2
+backend_hostname2 = 'pg-replica2'
+backend_port2 = 5432
+backend_weight2 = 1
+backend_flag2 = 'ALLOW_TO_FAILOVER'
+\end{lstlisting}
+
+\textbf{Penjelasan parameter:}
+\begin{itemize}
+    \item \texttt{backend\_hostname}: Nama \textit{host} atau alamat IP
+    dari setiap \textit{node} PostgreSQL. Pgpool-II menggunakan nama
+    \textit{container} Docker sebagai \textit{hostname}, yang
+    diresolusi oleh DNS internal Docker. Penggunaan hostname lebih
+    direkomendasikan daripada IP statis untuk fleksibilitas.
+    \item \texttt{backend\_port}: Port PostgreSQL pada \textit{node}
+    tersebut (port internal container 5432). Karena semua komunikasi
+    internal menggunakan port yang sama, Pgpool-II membedakan node
+    berdasarkan hostname.
+    \item \texttt{backend\_weight}: Bobot \textit{load balancing} untuk
+    mendistribusikan query \texttt{SELECT}. Nilai \texttt{0} pada
+    Master berarti Master \textbf{tidak} menerima query \textit{read}
+    sama sekali, sehingga fokus sepenuhnya pada operasi
+    \textit{write}. Nilai \texttt{1} pada Replica berarti
+    masing-masing Replica mendapat porsi yang sama dalam distribusi
+    query \texttt{SELECT}.
+    \item \texttt{backend\_flag = 'ALLOW\_TO\_FAILOVER'}: Mengizinkan
+    Pgpool-II untuk melepaskan (\textit{detach}) \textit{backend} yang
+    gagal dan melanjutkan operasi dengan \textit{backend} yang tersisa.
+    Tanpa flag ini, kegagalan satu \textit{backend} dapat menyebabkan
+    Pgpool-II berhenti merespons.
+\end{itemize}
+
+\subsection{Konfigurasi Load Balancing dan Read-Write Splitting}
+
+\begin{lstlisting}[caption={Konfigurasi Mode Pgpool-II
+(docker/pgpool/pgpool.conf)}, label={lst:pgpool-mode}]
+# Core Modes
+load_balance_mode = on          # Aktifkan distribusi SELECT ke replica
+master_slave_mode = on          # Aktifkan read-write splitting
+master_slave_sub_mode = 'stream' # Deteksi replikasi via streaming
+
+# Health Check
+health_check_period = 10
+health_check_timeout = 20
+health_check_user = 'repluser'
+health_check_password = 'replpassword'
+health_check_database = 'bdt_app'
+
+# Failover
+failover_on_backend_error = on
+
+# Logging (pembuktian read-write splitting)
+log_connections = on
+log_statement = on
+log_per_node_statement = on     # Catat node mana yang memproses query
+\end{lstlisting}
+
+\textbf{Penjelasan parameter mode:}
+\begin{itemize}
+    \item \texttt{load\_balance\_mode = on}: Mengaktifkan mekanisme
+    \textit{load balancing}. Query \texttt{SELECT} akan didistribusikan
+    ke \textit{backend} dengan \texttt{weight} di atas 0 (yaitu Replica
+    1 dan Replica 2). Tanpa mode ini, seluruh query akan diarahkan ke
+    Master meskipun jenisnya \texttt{SELECT}.
+    \item \texttt{master\_slave\_mode = on}: Mengaktifkan mekanisme
+    \textit{read-write splitting}. Pgpool-II secara otomatis
+    mengarahkan query \textit{write} ke Master (backend 0) dan query
+    \textit{read} ke Replica berdasarkan analisis \textit{query
+    pattern}. Mode ini adalah fondasi utama arsitektur yang dibangun.
+    \item \texttt{master\_slave\_sub\_mode = 'stream'}: Menggunakan
+    \textit{streaming replication} sebagai metode deteksi status
+    Master/Replica. Pgpool-II memeriksa \texttt{pg\_stat\_replication}
+    untuk menentukan node mana yang berperan sebagai primary dan mana
+    yang standby.
+    \item \texttt{log\_per\_node\_statement = on}: Mencatat
+    \textit{node} backend mana yang memproses setiap \textit{statement}
+    SQL. Ini sangat penting sebagai bukti bahwa \textit{read-write
+    splitting} berjalan. Setiap query akan tercatat dengan label
+    \texttt{DB node N} yang menunjukkan indeks backend.
+    \item \texttt{health\_check\_*}: Pgpool-II secara periodik (setiap
+    10 detik) memeriksa kesehatan setiap \textit{backend} menggunakan
+    user \texttt{repluser}. Jika \textit{backend} gagal setelah 3 kali
+    percobaan (\texttt{health\_check\_max\_retries}), \textit{backend}
+    tersebut di-\textit{detach} dari pool.
+    \item \texttt{failover\_on\_backend\_error = on}: Jika terjadi
+    kesalahan pada \textit{backend}, Pgpool-II akan memicu
+    \textit{failover} dan mengalihkan \textit{traffic} ke
+    \textit{backend} yang masih sehat. Fitur ini diuji pada skenario B
+    di Bab IV.
+\end{itemize}
+
+\subsection{Konfigurasi Autentikasi Client (pool\_hba.conf)}
+
+\begin{lstlisting}[caption={Konfigurasi pool\_hba.conf
+(docker/pgpool/pool\_hba.conf)}, label={lst:pool-hba}]
+# TYPE  DATABASE    USER        ADDRESS          METHOD
+local   all         all                         trust
+host    all         all         127.0.0.1/32    trust
+host    all         bdtuser     172.25.0.0/24    md5
+host    all         all         0.0.0.0/0        md5
+\end{lstlisting}
+
+File \texttt{pool\_hba.conf} mengatur autentikasi \textit{client} yang
+terhubung ke Pgpool-II. Mirip dengan \texttt{pg\_hba.conf} pada
+PostgreSQL, file ini mendefinisikan aturan akses berdasarkan tipe
+koneksi, database, user, alamat IP, dan metode autentikasi. User
+\texttt{bdtuser} dari jaringan Docker diizinkan dengan metode
+\texttt{md5} untuk keamanan. Aturan terakhir dengan \texttt{0.0.0.0/0}
+memungkinkan koneksi dari luar jaringan Docker dengan metode
+\texttt{md5}.
+
+\section{Integrasi Aplikasi}
+
+Aplikasi Laravel dikonfigurasi untuk terhubung ke
+\textbf{Pgpool-II}, bukan langsung ke PostgreSQL Master atau Replica.
+Ini memastikan seluruh mekanisme \textit{read-write splitting} dan
+\textit{load balancing} berjalan secara transparan tanpa perlu
+modifikasi kode aplikasi. Dari sudut pandang aplikasi, Pgpool-II
+tampak seperti server PostgreSQL biasa yang berjalan pada host
+\texttt{pgpool} dan port \texttt{5432}. Aplikasi tidak perlu
+mengetahui bahwa di belakang Pgpool-II terdapat tiga node PostgreSQL
+dengan peran berbeda.
+
+\subsection{Konfigurasi Environment}
+
+File \texttt{PWEB-B1/.env} (dan \texttt{.env.bdt} untuk Docker)
+mengatur koneksi database. File \texttt{.env} digunakan saat
+pengembangan lokal, sementara \texttt{.env.bdt} digunakan saat
+aplikasi berjalan di dalam container Docker. Kedua file menetapkan
+nilai \texttt{DB\_HOST=pgpool} yang merupakan hostname Pgpool-II dalam
+jaringan Docker.
+
+\begin{lstlisting}[caption={Konfigurasi Environment Aplikasi
+(PWEB-B1/.env)}, label={lst:env}]
+DB_CONNECTION=pgsql
+DB_HOST=pgpool            # Koneksi ke Pgpool-II, bukan langsung ke Master
+DB_PORT=5432
+DB_DATABASE=bdt_app
+DB_USERNAME=bdtuser
+DB_PASSWORD=bdtpassword
+\end{lstlisting}
+
+\textbf{Catatan penting:} Nilai \texttt{DB\_HOST=pgpool} menunjukkan
+bahwa aplikasi terhubung ke Pgpool-II (172.25.0.20), bukan ke
+PostgreSQL Master (172.25.0.10) atau Replica (172.25.0.11/12).
+Pgpool-II-lah yang akan meneruskan query ke \textit{backend} yang
+sesuai berdasarkan aturan \textit{read-write splitting} yang telah
+dikonfigurasi.
+
+\subsection{Konfigurasi Datasource Laravel}
+
+File \texttt{PWEB-B1/config/database.php} mendefinisikan koneksi
+PostgreSQL dalam array konfigurasi Laravel. Konfigurasi ini membaca
+nilai dari \textit{environment variable} yang telah diatur di file
+\texttt{.env}, sehingga nilai koneksi dapat berubah antara lingkungan
+pengembangan dan produksi tanpa mengubah kode.
+
+\begin{lstlisting}[language=PHP, caption={Konfigurasi Datasource
+Laravel (PWEB-B1/config/database.php)}, label={lst:datasource}]
+'pgsql' => [
+    'driver' => 'pgsql',
+    'url' => env('DATABASE_URL'),
+    'host' => env('DB_HOST', '127.0.0.1'),
+    'port' => env('DB_PORT', '5432'),
+    'database' => env('DB_DATABASE', 'forge'),
+    'username' => env('DB_USERNAME', 'forge'),
+    'password' => env('DB_PASSWORD', ''),
+    'charset' => 'utf8',
+    'prefix' => '',
+    'prefix_indexes' => true,
+    'search_path' => 'public',
+    'sslmode' => 'prefer',
+],
+\end{lstlisting}
+
+Konfigurasi datasource membaca nilai dari \textit{environment
+variable} yang telah diatur di file \texttt{.env}.
+\texttt{DB\_HOST} diambil dari \texttt{env('DB\_HOST')} yang bernilai
+\texttt{pgpool}. Dengan mekanisme \texttt{env()} ini, koneksi database
+dapat dengan mudah dialihkan ke server lain hanya dengan mengubah file
+\texttt{.env} tanpa menyentuh kode sumber aplikasi.
+
+\subsection{Koneksi di docker-compose.yml}
+
+Pada level orkestrasi, \textit{environment variable} aplikasi diatur
+di \texttt{docker-compose.yml} pada bagian \texttt{environment} dari
+service \texttt{app}. Ini memastikan bahwa saat container aplikasi
+dijalankan melalui Docker Compose, seluruh variabel koneksi database
+sudah terkonfigurasi dengan benar.
+
+\begin{lstlisting}[caption={Environment Variable Aplikasi di
+docker-compose.yml}, label={lst:compose-env}]
+app:
+  environment:
+    DB_CONNECTION: pgsql
+    DB_HOST: pgpool               # Aplikasi KONEK ke PGPool
+    DB_PORT: "5432"
+    DB_DATABASE: bdt_app
+    DB_USERNAME: bdtuser
+    DB_PASSWORD: bdtpassword
+\end{lstlisting}
+
+Dengan konfigurasi di atas, seluruh koneksi database dari aplikasi
+Laravel mengalir melalui Pgpool-II yang kemudian secara transparan
+mengarahkan query \textit{write} ke Master dan query \textit{read} ke
+Replica berdasarkan mekanisme \textit{read-write splitting}. Aplikasi
+tetap menggunakan sintaks SQL standar tanpa perlu memodifikasi kode
+untuk menentukan target server, karena seluruh logika \textit{routing}
+ditangani sepenuhnya oleh Pgpool-II.

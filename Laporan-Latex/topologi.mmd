@@ -1,0 +1,21 @@
+%% Mermaid.js Diagram -- Topologi Read-Write Splitting
+%% Render with: mmdc -i topologi.mmd -o ../images/topologi.png -t neutral -b transparent
+%% Or paste at https://mermaid.live
+
+graph TB
+    subgraph Host["Host Machine (Docker)"]
+        Client["Browser (Client)<br/>:8080"]
+        App["Laravel App<br/>bdt-app<br/>172.25.0.30:80"]
+        Pgpool["Pgpool-II<br/>pgpool<br/>172.25.0.20:5432<br/>PCP: 9898"]
+        Master["PostgreSQL Master<br/>pg-master<br/>172.25.0.10:5432<br/>WRITE only"]
+        Repl1["PostgreSQL Replica 1<br/>pg-replica1<br/>172.25.0.11:5432<br/>READ (weight=1)"]
+        Repl2["PostgreSQL Replica 2<br/>pg-replica2<br/>172.25.0.12:5432<br/>READ (weight=1)"]
+    end
+
+    Client -->|"HTTP :8080"| App
+    App -->|"DB Connection<br/>(PostgreSQL Wire Protocol)"| Pgpool
+    Pgpool -->|"WRITE<br/>INSERT/UPDATE/DELETE"| Master
+    Pgpool -->|"READ<br/>SELECT (balanced)"| Repl1
+    Pgpool -->|"READ<br/>SELECT (balanced)"| Repl2
+    Master -.->|"Streaming<br/>Replication<br/>(WAL)"| Repl1
+    Master -.->|"Streaming<br/>Replication<br/>(WAL)"| Repl2

@@ -1,0 +1,168 @@
+% ============================================================================
+% LAPORAN FINAL PROJECT - Basis Data Terdistribusi (Comvis-style format)
+% Implementasi Arsitektur Read-Write Splitting PostgreSQL Menggunakan Pgpool-II
+% pada Aplikasi Komposin (Sistem Bank Sampah & E-Commerce Pengelolaan Sampah)
+% ============================================================================
+
+\documentclass[12pt,a4paper,oneside]{report}
+
+\usepackage[indonesian]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{times}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{tikz}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric, shapes.symbols, backgrounds, calc, matrix, fit, shadows.blur}
+
+% ----- Page Layout ----------------------------------------------------------
+\geometry{left=2.5cm, top=2.5cm, right=2.5cm, bottom=2.5cm}
+\setlength{\parindent}{0.8cm}
+\setstretch{1.5}
+\raggedbottom
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+
+% ----- Chapter Formatting (centered, uppercase BAB) -------------------------
+\titleformat{\chapter}[display]
+    {\normalfont\large\bfseries\centering}
+    {\centering\MakeUppercase{\chaptertitlename}\ \thechapter}{0pt}{\large}
+\titlespacing*{\chapter}{0pt}{-15pt}{4pt}
+
+\titleformat{\section}[hang]
+    {\normalfont\normalsize\bfseries}
+    {\thesection}{0.5em}{}
+\titlespacing*{\section}{0pt}{4pt}{0pt}
+
+\titleformat{\subsection}[hang]
+    {\normalfont\normalsize\bfseries}
+    {\thesubsection}{0.5em}{}
+\titlespacing*{\subsection}{0pt}{3pt}{0pt}
+
+\setlist{nosep,topsep=0pt,partopsep=0pt,itemsep=0pt,parsep=0pt}
+
+% ----- Header / Footer (page number bottom-center) --------------------------
+\fancypagestyle{plain}{\fancyhf{}\fancyfoot[C]{\thepage}\renewcommand{\headrulewidth}{0pt}}
+\pagestyle{plain}
+
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue}
+\captionsetup[table]{font=small,labelfont=bf,labelsep=period}
+\captionsetup[figure]{font=small,labelfont=bf,labelsep=period}
+
+% ----- Code Listing Style ---------------------------------------------------
+\definecolor{codebg}{rgb}{0.95,0.95,0.95}
+\lstset{
+    basicstyle=\footnotesize\ttfamily,
+    breaklines=true,
+    frame=single,
+    numbers=left,
+    numbersep=5pt,
+    xleftmargin=10pt,
+    framexleftmargin=10pt,
+    aboveskip=4pt,
+    belowskip=4pt,
+    backgroundcolor=\color{codebg},
+    showstringspaces=false,
+}
+
+\begin{document}
+
+\pagenumbering{roman}
+
+% ===================== COVER PAGE =====================
+\begin{titlepage}
+\begin{center}
+\vspace*{0.8cm}
+{\Large\bfseries LAPORAN FINAL PROJECT}
+
+\vspace{0.8cm}
+{\large\bfseries
+IMPLEMENTASI ARSITEKTUR READ-WRITE SPLITTING \\
+POSTGRESQL MENGGUNAKAN PGPOOL-II PADA \\
+APLIKASI KOM{\kern-0.2em}POSIN (SISTEM BANK SAMPAH \& \\
+E-COMMERCE PENGELOLAAN SAMPAH)}
+
+\vspace{1cm}
+\includegraphics[width=0.35\textwidth]{images/logo.png}
+
+\vspace{1cm}
+{\bfseries Disusun Oleh:}
+
+\vspace{0.2cm}
+Fabian Nabil \hspace{1cm} 232410102022\\[0.1cm]
+[Ivan] \hspace{1cm} [NIM 2]\\[0.1cm]
+[Rio] \hspace{1cm} [NIM 3]\\[0.1cm]
+
+\vspace{0.5cm}
+{\bfseries Dosen Pembimbing:}\\[0.15cm]
+[Nama Dosen Pembimbing]\\[0.1cm]
+NIP. [NIP Dosen Pembimbing]
+
+\vfill
+{\bfseries
+PROGRAM STUDI TEKNOLOGI INFORMASI \\
+PROGRAM STUDI SISTEM INFORMASI \\
+FAKULTAS ILMU KOMPUTER \\
+UNIVERSITAS JEMBER \\
+2026}
+\end{center}
+\end{titlepage}
+
+% ===================== ABSTRAK =====================
+\chapter*{ABSTRAK}
+\addcontentsline{toc}{chapter}{ABSTRAK}
+
+Final project ini mengimplementasikan arsitektur \textit{read-write splitting}
+pada PostgreSQL menggunakan Pgpool-II sebagai \textit{middleware} untuk
+aplikasi Komposin --- sebuah platform bank sampah dan \textit{e-commerce}
+pengelolaan sampah berbasis Laravel 10. Arsitektur terdiri dari 1 (satu)
+PostgreSQL Master, 2 (dua) PostgreSQL Replica, dan 1 (satu) Pgpool-II yang
+di-\textit{deploy} menggunakan Docker Compose pada jaringan \textit{bridge}
+internal. Metode \textit{streaming replication} asinkron digunakan untuk
+menjaga sinkronisasi data dari Master ke Replica. Pgpool-II dikonfigurasi
+dengan \texttt{master\_slave\_mode} dan \texttt{load\_balance\_mode} untuk
+memisahkan query \textit{write} (\texttt{INSERT}, \texttt{UPDATE},
+\texttt{DELETE}) ke Master dan query \textit{read} (\texttt{SELECT}) ke
+Replica secara transparan. Hasil pengujian menunjukkan bahwa mekanisme
+\textit{read-write splitting} berhasil memisahkan beban query, \textit{load
+balancing} mendistribusikan query \texttt{SELECT} secara merata ke kedua
+Replica, dan sistem tetap beroperasi ketika salah satu Replica dimatikan
+karena mekanisme \textit{health check} dan \textit{failover} Pgpool-II.
+
+\vspace{0.2cm}
+\noindent\textbf{Kata Kunci:} \textit{read-write splitting}, PostgreSQL,
+Pgpool-II, \textit{streaming replication}, \textit{load balancing},
+\textit{fault tolerance}, Docker Compose, Laravel
+
+% ===================== DAFTAR ISI =====================
+\clearpage
+\tableofcontents
+\addcontentsline{toc}{chapter}{DAFTAR ISI}
+
+\clearpage
+\pagenumbering{arabic}
+
+% ===================== CHAPTERS =====================
+\input{chapters/bab1-pendahuluan.tex}
+\input{chapters/bab2-arsitektur.tex}
+\input{chapters/bab3-implementasi.tex}
+\input{chapters/bab4-pengujian.tex}
+\input{chapters/bab5-kesimpulan.tex}
+
+\end{document}

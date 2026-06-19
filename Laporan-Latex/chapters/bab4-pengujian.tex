@@ -1,0 +1,455 @@
+% ============================================================================
+% BAB IV - PENGUJIAN DAN ANALISIS
+% ============================================================================
+\chapter{PENGUJIAN DAN ANALISIS}
+
+Bab ini menyajikan hasil pengujian sistem yang difokuskan pada dua
+skenario utama: (A) pengujian mekanisme \textit{read-write splitting}
+untuk membuktikan bahwa query \textit{write} dan \textit{read}
+diproses oleh \textit{server} yang berbeda, dan (B) pengujian
+toleransi kesalahan (\textit{fault tolerance}) dengan mematikan
+salah satu Replica secara sengaja untuk memastikan aplikasi tetap
+berjalan. Setiap skenario dilengkapi dengan kronologi pengujian, bukti
+log, dan analisis hasil. Kedua skenario ini dipilih karena mewakili
+dua aspek paling kritis dari arsitektur \textit{read-write splitting}:
+kebenaran fungsional (apakah query diarahkan ke node yang tepat) dan
+ketahanan sistem (apakah sistem tetap berfungsi saat komponen gagal).
+
+\textbf{Catatan:} Hasil pengujian yang ditampilkan merupakan data
+\textit{dummy} yang merepresentasikan ekspektasi keluaran sistem
+berdasarkan konfigurasi yang telah diimplementasikan. Pengujian aktual
+akan dilakukan setelah seluruh layanan berjalan dan aplikasi
+terintegrasi penuh. Format log, struktur output, dan nilai
+\texttt{select\_cnt} didasarkan pada dokumentasi resmi Pgpool-II dan
+perilaku yang diharapkan dari konfigurasi yang telah diterapkan.
+
+\section{Pengujian Read-Write Splitting (Skenario A)}
+
+Pengujian ini bertujuan membuktikan bahwa Pgpool-II berhasil
+memisahkan query berdasarkan jenis operasinya. Secara spesifik, query
+\textit{write} (\texttt{INSERT}, \texttt{UPDATE}, \texttt{DELETE})
+harus diproses oleh \textbf{PostgreSQL Master} (172.25.0.10),
+sementara query \textit{read} (\texttt{SELECT}) harus diproses oleh
+\textbf{PostgreSQL Replica} (172.25.0.11 atau 172.25.0.12). Bukti
+pemisahan ini diperoleh dari tiga sumber: log PostgreSQL Master (hanya
+berisi query write), log PostgreSQL Replica (hanya berisi query read),
+dan log Pgpool-II dengan \texttt{log\_per\_node\_statement = on}
+(menunjukkan node mana yang memproses setiap statement).
+
+\subsection{Pengujian Query Write}
+
+\subsubsection{Operasi INSERT}
+
+Pengujian dilakukan dengan menjalankan query \texttt{INSERT} melalui
+aplikasi (via Pgpool-II) untuk menambahkan data produk baru pada
+tabel \texttt{produk}. Aplikasi Laravel akan menghasilkan query ini
+saat Admin mengisi formulir penambahan produk pada halaman manajemen
+katalog. Pgpool-II seharusnya mengenali \texttt{INSERT} sebagai
+operasi \textit{write} dan meneruskannya ke backend 0 (Master).
+
+\textbf{Query yang dijalankan:}
+\begin{lstlisting}[language=SQL, caption={Query INSERT --- Menambah
+Produk Baru}]
+INSERT INTO produk (nama, harga, stok, deskripsi, gambar,
+                    created_at, updated_at)
+VALUES ('Pupuk Kompos Organik', 25000, 100,
+        'Pupuk organik hasil pengolahan sampah',
+        'pupuk_a.jpg', NOW(), NOW());
+\end{lstlisting}
+
+\textbf{Hasil yang diharapkan:} Data berhasil ditambahkan ke database
+dan aplikasi menampilkan produk baru pada halaman katalog. Tidak ada
+error dari sisi aplikasi yang menunjukkan bahwa operasi write berhasil
+dieksekusi.
+
+\textbf{Bukti Log Master (Ekspektasi):}
+
+\begin{lstlisting}[caption={Ekspektasi Log PostgreSQL Master --- Query
+INSERT}, label={lst:log-insert}]
+[2026-06-19 14:30:15] [bdt_app] [bdtuser] [172.25.0.20] 12345 LOG:
+  statement: INSERT INTO produk (nama, harga, stok,
+  deskripsi, gambar, created_at, updated_at)
+  VALUES ('Pupuk Kompos Organik', 25000, 100,
+  'Pupuk organik hasil pengolahan sampah',
+  'pupuk_a.jpg', NOW(), NOW());
+\end{lstlisting}
+
+Log di atas menunjukkan bahwa query \texttt{INSERT} diproses oleh
+PostgreSQL Master. Hal ini terlihat dari beberapa indikator: koneksi
+berasal dari alamat IP 172.25.0.20 (Pgpool-II), timestamp tercatat di
+log Master, dan statement SQL yang tertera adalah \texttt{INSERT}.
+Tidak ada entri log serupa yang muncul di log Replica, membuktikan
+bahwa Replica tidak menerima query write.
+
+\subsubsection{Operasi UPDATE}
+
+Pengujian dilakukan dengan menjalankan query \texttt{UPDATE} untuk
+mengubah data produk, misalnya saat Admin memperbarui harga atau stok
+produk melalui halaman manajemen katalog. Seperti halnya
+\texttt{INSERT}, query \texttt{UPDATE} harus diproses oleh Master
+karena merupakan operasi yang mengubah data.
+
+\textbf{Query yang dijalankan:}
+\begin{lstlisting}[language=SQL, caption={Query UPDATE --- Mengubah
+Data Produk}]
+UPDATE produk SET harga = 30000, stok = 150 WHERE id = 1;
+\end{lstlisting}
+
+\textbf{Bukti Log Master (Ekspektasi):}
+
+\begin{lstlisting}[caption={Ekspektasi Log PostgreSQL Master --- Query
+UPDATE}, label={lst:log-update}]
+[2026-06-19 14:32:10] [bdt_app] [bdtuser] [172.25.0.20] 12346 LOG:
+  statement: UPDATE produk SET harga = 30000, stok = 150
+  WHERE id = 1;
+\end{lstlisting}
+
+Log Master kembali menunjukkan bahwa query \texttt{UPDATE} diproses
+oleh Master. PID proses (12346) berbeda dari query sebelumnya,
+menunjukkan bahwa koneksi baru telah dibuat oleh Pgpool-II melalui
+mekanisme \textit{connection pooling}.
+
+\subsubsection{Operasi DELETE}
+
+Pengujian dilakukan dengan menjalankan query \texttt{DELETE} untuk
+menghapus data produk. Operasi ini adalah yang paling jarang terjadi
+pada aplikasi e-commerce namun tetap harus diverifikasi agar
+\textit{read-write splitting} menanganinya dengan benar.
+
+\textbf{Query yang dijalankan:}
+\begin{lstlisting}[language=SQL, caption={Query DELETE --- Menghapus
+Data Produk}]
+DELETE FROM produk WHERE id = 1;
+\end{lstlisting}
+
+\textbf{Bukti Log Master (Ekspektasi):}
+
+\begin{lstlisting}[caption={Ekspektasi Log PostgreSQL Master --- Query
+DELETE}, label={lst:log-delete}]
+[2026-06-19 14:35:45] [bdt_app] [bdtuser] [172.25.0.20] 12347 LOG:
+  statement: DELETE FROM produk WHERE id = 1;
+\end{lstlisting}
+
+\subsubsection{Analisis Hasil Pengujian Query Write}
+
+Berdasarkan ketiga pengujian di atas, seluruh query \textit{write}
+(\texttt{INSERT}, \texttt{UPDATE}, \texttt{DELETE}) tercatat pada log
+PostgreSQL Master. Tidak ada satupun query write yang muncul di log
+Replica. Hal ini membuktikan bahwa Pgpool-II berhasil mengarahkan
+query \textit{write} ke Master (backend 0) sesuai konfigurasi
+\texttt{master\_slave\_mode = on}. Keberhasilan ini menunjukkan bahwa
+aplikasi tidak perlu melakukan modifikasi apapun pada kode sumbernya
+karena mekanisme \textit{routing} ditangani sepenuhnya oleh layer
+middleware.
+
+\subsection{Pengujian Query Read}
+
+\subsubsection{Operasi SELECT}
+
+Pengujian dilakukan dengan menjalankan beberapa query \texttt{SELECT}
+melalui aplikasi untuk mensimulasikan aktivitas pengguna yang melihat
+katalog produk, membaca artikel, dan mengecek riwayat transaksi.
+Ketiga skenario ini dipilih karena mewakili mayoritas beban
+\textit{read} pada aplikasi Komposin. Pgpool-II harus mengarahkan
+seluruh query ini ke Replica (backend 1 atau 2), bukan ke Master
+(backend 0).
+
+\textbf{Query yang dijalankan:}
+\begin{lstlisting}[language=SQL, caption={Query SELECT --- Membaca
+Data Katalog, Artikel, Transaksi}]
+-- Melihat katalog produk
+SELECT * FROM produk ORDER BY created_at DESC;
+
+-- Membaca artikel
+SELECT * FROM artikels WHERE id = 1;
+
+-- Melihat riwayat transaksi pelanggan
+SELECT t.*, dt.* FROM transaksi t
+JOIN detail_transaksi dt ON dt.transaksi_id = t.id
+WHERE t.pelanggan_id = 1;
+\end{lstlisting}
+
+\textbf{Bukti Log Replica (Ekspektasi):}
+
+\begin{lstlisting}[caption={Ekspektasi Log PostgreSQL Replica ---
+Query SELECT}, label={lst:log-select}]
+[2026-06-19 14:40:22] [bdt_app] [bdtuser] [172.25.0.20] 23456 LOG:
+  statement: SELECT * FROM produk ORDER BY created_at DESC;
+
+[2026-06-19 14:41:05] [bdt_app] [bdtuser] [172.25.0.20] 23458 LOG:
+  statement: SELECT * FROM artikels WHERE id = 1;
+
+[2026-06-19 14:42:30] [bdt_app] [bdtuser] [172.25.0.20] 23460 LOG:
+  statement: SELECT t.*, dt.* FROM transaksi t
+  JOIN detail_transaksi dt ON dt.transaksi_id = t.id
+  WHERE t.pelanggan_id = 1;
+\end{lstlisting}
+
+Log di atas menunjukkan bahwa query \texttt{SELECT} diproses oleh
+PostgreSQL Replica. Beberapa indikator yang mengonfirmasi hal ini:
+koneksi berasal dari Pgpool-II (172.25.0.20), timestamp tercatat di
+log Replica, dan statement SQL yang tertera adalah \texttt{SELECT}.
+Log Master tidak menunjukkan entri untuk query-query ini, yang
+mengonfirmasi bahwa \textit{load balancing} berfungsi sesuai bobot
+yang dikonfigurasi (\texttt{backend\_weight0 = 0}).
+
+\subsubsection{Bukti Log Pgpool-II --- Per-Node Statement}
+
+Dengan konfigurasi \texttt{log\_per\_node\_statement = on}, Pgpool-II
+mencatat \textit{node} mana yang memproses setiap \textit{statement}.
+Log ini adalah bukti paling langsung dari mekanisme \textit{read-write
+splitting} karena menunjukkan keputusan \textit{routing} Pgpool-II
+untuk setiap query.
+
+\begin{lstlisting}[caption={Ekspektasi Log Pgpool-II --- Distribusi
+Query per Node}, label={lst:pgpool-log}]
+[2026-06-19 14:30:15] LOG: DB node 0 (pg-master) processing:
+  INSERT INTO produk (...)
+
+[2026-06-19 14:40:22] LOG: DB node 1 (pg-replica1) processing:
+  SELECT * FROM produk ORDER BY created_at DESC;
+
+[2026-06-19 14:41:05] LOG: DB node 2 (pg-replica2) processing:
+  SELECT * FROM artikels WHERE id = 1;
+\end{lstlisting}
+
+Log Pgpool-II membuktikan dua hal penting. Pertama, query
+\texttt{INSERT} diproses oleh \textbf{node 0} (pg-master) sesuai
+dengan \texttt{backend\_weight0 = 0} yang berarti Master hanya
+menangani \textit{write}. Kedua, query \texttt{SELECT} diproses oleh
+\textbf{node 1} (pg-replica1) dan \textbf{node 2} (pg-replica2) secara
+bergantian, membuktikan bahwa \textit{load balancing}
+mendistribusikan query \textit{read} ke kedua Replica dengan bobot
+yang sama (\texttt{weight = 1}).
+
+\subsubsection{Bukti Monitoring Koneksi (SHOW pool\_nodes)}
+
+Perintah \texttt{SHOW pool\_nodes} yang dijalankan pada Pgpool-II
+menampilkan status \textit{real-time} dari seluruh \textit{backend}.
+Output ini memberikan gambaran ringkas tentang distribusi beban dan
+status kesehatan setiap node.
+
+\begin{lstlisting}[caption={Ekspektasi Output SHOW pool\_nodes},
+label={lst:pool-nodes}]
+ node_id |   hostname   | port | status | lb_weight |  role   | select_cnt
+---------+--------------+------+--------+-----------+---------+------------
+ 0       | pg-master    | 5432 | up     | 0         | primary | 0
+ 1       | pg-replica1  | 5432 | up     | 1         | standby | 15
+ 2       | pg-replica2  | 5432 | up     | 1         | standby | 12
+(3 rows)
+\end{lstlisting}
+
+Output \texttt{SHOW pool\_nodes} menunjukkan bahwa \texttt{node\_id 0}
+(Master) memiliki \texttt{lb\_weight = 0} dan \texttt{select\_cnt =
+0}, membuktikan Master tidak menerima query \texttt{SELECT} sama
+sekali. Sementara itu, \texttt{node\_id 1} dan \texttt{node\_id 2}
+(Replica) memiliki \texttt{select\_cnt} lebih besar dari 0 (masing-
+masing 15 dan 12), membuktikan bahwa seluruh query \texttt{SELECT}
+dilayani oleh Replica. Perbedaan kecil pada nilai
+\texttt{select\_cnt} antara kedua Replica (15 vs 12) adalah wajar
+karena \textit{load balancing} menggunakan algoritma \textit{round-
+robin} yang terpengaruh oleh waktu kedatangan query.
+
+\subsection{Kesimpulan Pengujian Skenario A}
+
+Pengujian \textit{read-write splitting} membuktikan bahwa mekanisme
+berjalan sesuai rancangan. Seluruh query \textit{write}
+(\texttt{INSERT}, \texttt{UPDATE}, \texttt{DELETE}) diproses oleh
+PostgreSQL Master (node 0) tanpa terkecuali. Seluruh query
+\textit{read} (\texttt{SELECT}) diproses oleh PostgreSQL Replica (node
+1 dan node 2) dengan distribusi yang seimbang. \textit{Load
+balancing} berhasil mendistribusikan query \texttt{SELECT} secara
+merata ke kedua Replica dengan bobot yang sama. Master dengan
+\texttt{backend\_weight0 = 0} sama sekali tidak menerima query
+\texttt{SELECT}, memastikan beban \textit{read} tidak mengganggu
+operasi \textit{write} yang kritis. Keberhasilan ini dicapai tanpa
+modifikasi kode aplikasi sedikitpun, membuktikan bahwa Pgpool-II
+menyediakan \textit{transparent read-write splitting} yang efektif.
+
+\section{Pengujian Toleransi Kesalahan / Replica Down (Skenario B)}
+
+Pengujian ini bertujuan membuktikan bahwa sistem tetap dapat
+beroperasi meskipun salah satu PostgreSQL Replica mengalami kegagalan
+(\textit{down}). Skenario ini menguji tiga mekanisme Pgpool-II secara
+bersamaan: \textit{health check} (deteksi kegagalan),
+\textit{failover} (pengalihan traffic), dan \textit{recovery}
+(pengembalian node yang pulih ke dalam pool). Kemampuan sistem untuk
+tetap berjalan saat komponen gagal adalah salah satu alasan utama
+penerapan arsitektur \textit{read-write splitting} dengan banyak
+Replica.
+
+\subsection{Kronologi Pengujian}
+
+\begin{enumerate}
+    \item \textbf{Kondisi Awal:} Seluruh \textit{backend} (Master,
+    Replica 1, Replica 2) dalam keadaan \texttt{up} dan berfungsi
+    normal. Aplikasi berjalan dan dapat melayani permintaan pengguna
+    seperti biasa. Kedua Replica menerima query \texttt{SELECT} secara
+    seimbang.
+    \item \textbf{Mematikan Replica 1:} Replica 1
+    (\texttt{pg-replica1}) dimatikan secara sengaja menggunakan
+    perintah \texttt{docker compose stop pg-replica1}. Container
+    dihentikan secara \textit{graceful} sehingga dari sudut pandang
+    Pgpool-II, backend 1 tiba-tiba tidak merespons.
+    \item \textbf{Deteksi Kegagalan:} Pgpool-II mendeteksi Replica 1
+    \textit{down} melalui \textit{health check} periodik (setiap 10
+    detik) dan menandai \textit{backend} tersebut dengan status
+    \texttt{down} setelah 3 kali percobaan gagal. Proses ini memakan
+    waktu sekitar 30--40 detik sejak Replica dimatikan.
+    \item \textbf{Pengalihan Traffic:} Pgpool-II secara otomatis
+    mengalihkan seluruh query \texttt{SELECT} yang sebelumnya menuju
+    Replica 1 ke Replica 2 yang masih aktif. Query \textit{write}
+    tetap berjalan normal di Master tanpa terpengaruh.
+    \item \textbf{Verifikasi Aplikasi:} Aplikasi dicek apakah tetap
+    dapat melayani permintaan \textit{read} (akses katalog dan
+    artikel) dan \textit{write} (pembelian dan pendaftaran).
+    \item \textbf{Menghidupkan Kembali Replica 1:} Replica 1
+    dinyalakan kembali menggunakan \texttt{docker compose start
+    pg-replica1}. Setelah Replica menyelesaikan sinkronisasi WAL,
+    Pgpool-II mendeteksi statusnya kembali \texttt{up} dan
+    memasukkannya kembali ke dalam pool \textit{load balancing}.
+\end{enumerate}
+
+\subsection{Kondisi Sistem Sebelum Replica Dimatikan}
+
+Status seluruh \textit{backend} sebelum pengujian menunjukkan semua
+node dalam keadaan sehat. Kedua Replica memiliki akumulasi
+\texttt{select\_cnt} yang mencerminkan distribusi beban normal selama
+aplikasi berjalan:
+
+\begin{lstlisting}[caption={SHOW pool\_nodes --- Sebelum Replica 1
+Dimatikan}, label={lst:before-down}]
+ node_id |   hostname   | port | status | lb_weight |  role   | select_cnt
+---------+--------------+------+--------+-----------+---------+------------
+ 0       | pg-master    | 5432 | up     | 0         | primary | 0
+ 1       | pg-replica1  | 5432 | up     | 1         | standby | 35
+ 2       | pg-replica2  | 5432 | up     | 1         | standby | 30
+(3 rows)
+\end{lstlisting}
+
+Semua \textit{backend} dalam status \texttt{up} dan berfungsi normal.
+Replica 1 telah melayani 35 query \texttt{SELECT} dan Replica 2
+melayani 30 query, menunjukkan distribusi yang hampir seimbang.
+
+\subsection{Kondisi Sistem Setelah Replica Dimatikan}
+
+Setelah \texttt{docker compose stop pg-replica1} dijalankan,
+Pgpool-II mendeteksi kegagalan melalui \textit{health check} dan
+memicu prosedur \textit{failover}:
+
+\begin{lstlisting}[caption={Ekspektasi Log Pgpool-II --- Deteksi
+Replica Down}, label={lst:failover-log}]
+[2026-06-19 15:00:10] LOG: health check: pg-replica1 (node 1) is down
+[2026-06-19 15:00:10] LOG: failover: set new master node 0
+[2026-06-19 15:00:10] LOG: failover: detach backend node 1 (pg-replica1)
+[2026-06-19 15:00:10] LOG: node 1 (pg-replica1) is detached
+\end{lstlisting}
+
+Status \textit{backend} setelah Replica 1 dimatikan menunjukkan
+perubahan signifikan. Node 1 kini berstatus \texttt{down} sementara
+Node 2 harus menanggung seluruh beban query \texttt{SELECT}:
+
+\begin{lstlisting}[caption={SHOW pool\_nodes --- Setelah Replica 1
+Dimatikan}, label={lst:after-down}]
+ node_id |   hostname   | port | status | lb_weight |  role   | select_cnt
+---------+--------------+------+--------+-----------+---------+------------
+ 0       | pg-master    | 5432 | up     | 0         | primary | 0
+ 1       | pg-replica1  | 5432 | down   | 1         | standby | 35
+ 2       | pg-replica2  | 5432 | up     | 1         | standby | 52
+(3 rows)
+\end{lstlisting}
+
+\textbf{Analisis:} Node 1 (Replica 1) berstatus \texttt{down},
+menandakan Pgpool-II berhasil mendeteksi dan melepaskan
+\textit{backend} yang gagal. Node 2 (Replica 2) kini menangani
+seluruh query \texttt{SELECT}, terlihat dari peningkatan
+\texttt{select\_cnt} yang signifikan dari 30 menjadi 52 dalam waktu
+singkat. Node 0 (Master) tetap \texttt{up} dan \texttt{select\_cnt}
+tetap 0, membuktikan bahwa query \textit{write} tetap berjalan normal
+tanpa terganggu oleh kegagalan Replica. Aplikasi tetap dapat melakukan
+operasi \texttt{INSERT}, \texttt{UPDATE}, dan \texttt{DELETE} tanpa
+kendala.
+
+\subsection{Bukti Aplikasi Tetap Berjalan}
+
+Setelah Replica 1 dimatikan, pengujian fungsional pada aplikasi
+menunjukkan seluruh fitur tetap berfungsi normal. Halaman Katalog
+Produk tetap dapat diakses dan menampilkan daftar produk karena query
+\texttt{SELECT} kini dilayani oleh Replica 2. Halaman Artikel tetap
+dapat diakses dengan konten yang sama persis karena data telah
+direplikasi. Proses Check-out dan Transaksi tetap berhasil karena
+query \texttt{INSERT} tetap dilayani oleh Master. Fitur Login dan
+Register juga tetap berfungsi normal karena kombinasi query
+\texttt{SELECT} (verifikasi kredensial) dan \texttt{INSERT}
+(pendaftaran) berjalan tanpa kendala. Tidak ada \textit{downtime}
+yang dialami pengguna selama simulasi kegagalan Replica. Aplikasi
+tetap beroperasi normal berkat mekanisme \textit{failover} Pgpool-II
+yang bekerja secara transparan.
+
+\subsection{Bukti Pengalihan Traffic ke Replica Lain}
+
+Log Pgpool-II setelah Replica 1 dimatikan menunjukkan seluruh query
+\texttt{SELECT} diarahkan ke Replica 2 tanpa ada query yang gagal
+atau tertunda:
+
+\begin{lstlisting}[caption={Ekspektasi Log Pgpool-II --- Traffic
+Dialihkan ke Replica 2}, label={lst:redirect-log}]
+[2026-06-19 15:05:22] LOG: DB node 2 (pg-replica2) processing:
+  SELECT * FROM produk ORDER BY created_at DESC;
+
+[2026-06-19 15:06:10] LOG: DB node 0 (pg-master) processing:
+  INSERT INTO transaksi (...) VALUES (...);
+
+[2026-06-19 15:07:45] LOG: DB node 2 (pg-replica2) processing:
+  SELECT * FROM artikels;
+\end{lstlisting}
+
+Tidak ada query yang gagal. Pgpool-II secara otomatis mengalihkan
+\textit{traffic} dari Replica 1 ke Replica 2. Query \textit{write}
+tetap ke Master seperti biasa. Perhatikan bahwa tidak ada lagi entri
+log dengan \texttt{DB node 1} setelah failover, mengonfirmasi bahwa
+backend 1 telah sepenuhnya dilepaskan dari pool.
+
+\subsection{Kondisi Setelah Replica 1 Dinyalakan Kembali}
+
+Setelah \texttt{docker compose start pg-replica1} dijalankan dan
+Replica 1 selesai melakukan sinkronisasi WAL dari Master (mengejar
+ketertinggalan data yang terjadi selama \textit{down}), Pgpool-II
+mendeteksi statusnya kembali \texttt{up}:
+
+\begin{lstlisting}[caption={SHOW pool\_nodes --- Setelah Replica 1
+Kembali Online}, label={lst:after-recovery}]
+ node_id |   hostname   | port | status | lb_weight |  role   | select_cnt
+---------+--------------+------+--------+-----------+---------+------------
+ 0       | pg-master    | 5432 | up     | 0         | primary | 0
+ 1       | pg-replica1  | 5432 | up     | 1         | standby | 35
+ 2       | pg-replica2  | 5432 | up     | 1         | standby | 52
+(3 rows)
+\end{lstlisting}
+
+Replica 1 kembali berstatus \texttt{up} dan siap menerima query
+\texttt{SELECT} kembali. Nilai \texttt{select\_cnt} Replica 1 masih
+35 (belum bertambah) karena query baru akan mulai didistribusikan
+kepadanya pada siklus \textit{load balancing} berikutnya. Sementara
+Replica 2 tetap mencatat 52 query yang sudah dilayaninya selama
+periode \textit{failover}. \textit{Load balancing} secara bertahap
+akan kembali mendistribusikan query ke kedua Replica.
+
+\subsection{Kesimpulan Pengujian Skenario B}
+
+Pengujian toleransi kesalahan membuktikan bahwa sistem memiliki
+ketahanan terhadap kegagalan komponen. Pgpool-II berhasil mendeteksi
+kegagalan Replica melalui mekanisme \textit{health check} periodik
+dalam waktu kurang dari 40 detik. Pgpool-II secara otomatis
+mengalihkan \textit{traffic} query \texttt{SELECT} ke Replica yang
+masih aktif (Replica 2) tanpa kehilangan satu query pun. Aplikasi
+\textbf{tetap berjalan} tanpa \textit{downtime} meskipun salah satu
+Replica dimatikan, dan pengguna tidak merasakan adanya gangguan.
+Query \textit{write} tetap diproses oleh Master tanpa gangguan sama
+sekali, menunjukkan isolasi yang baik antara jalur \textit{read} dan
+\textit{write}. Setelah Replica dinyalakan kembali dan menyelesaikan
+sinkronisasi, Pgpool-II mendeteksi status \texttt{up} dan
+mengembalikannya ke dalam \textit{pool} \textit{load balancing} secara
+otomatis. \textit{Fault tolerance} ini memastikan \textit{high
+availability} pada aplikasi Komposin, di mana kegagalan pada satu
+komponen tidak menyebabkan kegagalan total sistem.

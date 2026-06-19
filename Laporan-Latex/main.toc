@@ -1,0 +1,61 @@
+\babel@toc {indonesian}{}\relax 
+\contentsline {chapter}{ABSTRAK}{i}{chapter*.1}%
+\contentsline {chapter}{DAFTAR ISI}{iii}{chapter*.2}%
+\contentsline {chapter}{\numberline {1}PENDAHULUAN}{1}{chapter.1}%
+\contentsline {section}{\numberline {1.1}Latar Belakang}{1}{section.1.1}%
+\contentsline {section}{\numberline {1.2}Ruang Lingkup Sistem}{2}{section.1.2}%
+\contentsline {subsection}{\numberline {1.2.1}Aplikasi yang Dibangun}{2}{subsection.1.2.1}%
+\contentsline {subsection}{\numberline {1.2.2}Fitur Utama Aplikasi}{2}{subsection.1.2.2}%
+\contentsline {subsection}{\numberline {1.2.3}Batasan Implementasi Sistem}{3}{subsection.1.2.3}%
+\contentsline {chapter}{\numberline {2}ARSITEKTUR DAN TOPOLOGI SISTEM}{4}{chapter.2}%
+\contentsline {section}{\numberline {2.1}Diagram Topologi Jaringan}{4}{section.2.1}%
+\contentsline {subsection}{\numberline {2.1.1}Alamat IP dan Port Layanan}{4}{subsection.2.1.1}%
+\contentsline {subsection}{\numberline {2.1.2}Arah Komunikasi Antar Server}{5}{subsection.2.1.2}%
+\contentsline {section}{\numberline {2.2}Spesifikasi Lingkungan (Environment)}{6}{section.2.2}%
+\contentsline {subsection}{\numberline {2.2.1}Struktur File Konfigurasi}{7}{subsection.2.2.1}%
+\contentsline {chapter}{\numberline {3}IMPLEMENTASI DAN KONFIGURASI}{8}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Konfigurasi Replication}{8}{section.3.1}%
+\contentsline {subsection}{\numberline {3.1.1}Konfigurasi PostgreSQL Master}{8}{subsection.3.1.1}%
+\contentsline {subsubsection}{postgresql.conf --- Master}{8}{subsubsection*.6}%
+\contentsline {subsubsection}{pg\_hba.conf --- Master}{9}{subsubsection*.7}%
+\contentsline {subsubsection}{Pembuatan User Replikasi}{10}{subsubsection*.8}%
+\contentsline {subsection}{\numberline {3.1.2}Konfigurasi PostgreSQL Replica}{11}{subsection.3.1.2}%
+\contentsline {subsubsection}{postgresql.conf --- Replica}{11}{subsubsection*.9}%
+\contentsline {subsubsection}{Script Inisialisasi Replica (entrypoint.sh)}{12}{subsubsection*.10}%
+\contentsline {section}{\numberline {3.2}Konfigurasi Pgpool-II}{13}{section.3.2}%
+\contentsline {subsection}{\numberline {3.2.1}Konfigurasi Backend}{13}{subsection.3.2.1}%
+\contentsline {subsection}{\numberline {3.2.2}Konfigurasi Load Balancing dan Read-Write Splitting}{14}{subsection.3.2.2}%
+\contentsline {subsection}{\numberline {3.2.3}Konfigurasi Autentikasi Client (pool\_hba.conf)}{15}{subsection.3.2.3}%
+\contentsline {section}{\numberline {3.3}Integrasi Aplikasi}{16}{section.3.3}%
+\contentsline {subsection}{\numberline {3.3.1}Konfigurasi Environment}{16}{subsection.3.3.1}%
+\contentsline {subsection}{\numberline {3.3.2}Konfigurasi Datasource Laravel}{16}{subsection.3.3.2}%
+\contentsline {subsection}{\numberline {3.3.3}Koneksi di docker-compose.yml}{17}{subsection.3.3.3}%
+\contentsline {chapter}{\numberline {4}PENGUJIAN DAN ANALISIS}{19}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Pengujian Read-Write Splitting (Skenario A)}{19}{section.4.1}%
+\contentsline {subsection}{\numberline {4.1.1}Pengujian Query Write}{19}{subsection.4.1.1}%
+\contentsline {subsubsection}{Operasi INSERT}{19}{subsubsection*.11}%
+\contentsline {subsubsection}{Operasi UPDATE}{20}{subsubsection*.12}%
+\contentsline {subsubsection}{Operasi DELETE}{21}{subsubsection*.13}%
+\contentsline {subsubsection}{Analisis Hasil Pengujian Query Write}{21}{subsubsection*.14}%
+\contentsline {subsection}{\numberline {4.1.2}Pengujian Query Read}{22}{subsection.4.1.2}%
+\contentsline {subsubsection}{Operasi SELECT}{22}{subsubsection*.15}%
+\contentsline {subsubsection}{Bukti Log Pgpool-II --- Per-Node Statement}{23}{subsubsection*.16}%
+\contentsline {subsubsection}{Bukti Monitoring Koneksi (SHOW pool\_nodes)}{23}{subsubsection*.17}%
+\contentsline {subsection}{\numberline {4.1.3}Kesimpulan Pengujian Skenario A}{24}{subsection.4.1.3}%
+\contentsline {section}{\numberline {4.2}Pengujian Toleransi Kesalahan / Replica Down (Skenario B)}{24}{section.4.2}%
+\contentsline {subsection}{\numberline {4.2.1}Kronologi Pengujian}{24}{subsection.4.2.1}%
+\contentsline {subsection}{\numberline {4.2.2}Kondisi Sistem Sebelum Replica Dimatikan}{25}{subsection.4.2.2}%
+\contentsline {subsection}{\numberline {4.2.3}Kondisi Sistem Setelah Replica Dimatikan}{25}{subsection.4.2.3}%
+\contentsline {subsection}{\numberline {4.2.4}Bukti Aplikasi Tetap Berjalan}{26}{subsection.4.2.4}%
+\contentsline {subsection}{\numberline {4.2.5}Bukti Pengalihan Traffic ke Replica Lain}{26}{subsection.4.2.5}%
+\contentsline {subsection}{\numberline {4.2.6}Kondisi Setelah Replica 1 Dinyalakan Kembali}{27}{subsection.4.2.6}%
+\contentsline {subsection}{\numberline {4.2.7}Kesimpulan Pengujian Skenario B}{27}{subsection.4.2.7}%
+\contentsline {chapter}{\numberline {5}KESIMPULAN DAN KENDALA}{29}{chapter.5}%
+\contentsline {section}{\numberline {5.1}Kesimpulan}{29}{section.5.1}%
+\contentsline {subsection}{\numberline {5.1.1}Keberhasilan Implementasi Replikasi Database}{29}{subsection.5.1.1}%
+\contentsline {subsection}{\numberline {5.1.2}Keberhasilan Mekanisme Read-Write Splitting}{29}{subsection.5.1.2}%
+\contentsline {subsection}{\numberline {5.1.3}Manfaat Penggunaan Pgpool-II}{30}{subsection.5.1.3}%
+\contentsline {subsection}{\numberline {5.1.4}Peningkatan Efisiensi Distribusi Query Database}{30}{subsection.5.1.4}%
+\contentsline {section}{\numberline {5.2}Kendala dan Solusi}{30}{section.5.2}%
+\contentsline {subsection}{\numberline {5.2.1}Kendala yang Mungkin Ditemukan}{30}{subsection.5.2.1}%
+\contentsline {subsection}{\numberline {5.2.2}Proses Analisis dan Penyelesaian Masalah}{32}{subsection.5.2.2}%
