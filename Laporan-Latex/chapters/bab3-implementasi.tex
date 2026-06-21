@@ -31,7 +31,7 @@ ini sudah sangat memadai.
 
 \subsection{Konfigurasi PostgreSQL Master}
 
-\subsubsection{postgresql.conf --- Master}
+\subsubsection{postgresql.conf (Master)}
 
 File konfigurasi utama Master terletak di
 \texttt{docker/pg-master/postgresql.conf}. Berikut adalah bagian
@@ -80,7 +80,7 @@ log_line_prefix = '[%t] [%d] [%u] [%h] %p '
     \textit{write} diproses oleh Master dalam pengujian nanti.
 \end{itemize}
 
-\subsubsection{pg\_hba.conf --- Master}
+\subsubsection{pg\_hba.conf (Master)}
 
 File \texttt{docker/pg-master/pg\_hba.conf} mengatur autentikasi
 koneksi yang masuk ke Master. File ini sangat kritis karena kesalahan
@@ -152,7 +152,7 @@ melakukan \textit{health check} periodik.
 
 \subsection{Konfigurasi PostgreSQL Replica}
 
-\subsubsection{postgresql.conf --- Replica}
+\subsubsection{postgresql.conf (Replica)}
 
 File konfigurasi Replica terletak di
 \texttt{docker/pg-replica/postgresql.conf}. Konfigurasi ini

@@ -106,13 +106,9 @@ E-COMMERCE PENGELOLAAN SAMPAH)}
 
 \vspace{0.2cm}
 Fabian Nabil \hspace{1cm} 232410102022\\[0.1cm]
-[Ivan] \hspace{1cm} [NIM 2]\\[0.1cm]
-[Rio] \hspace{1cm} [NIM 3]\\[0.1cm]
+Muhammad Ivan Makhrizal \hspace{1cm} 232410101030\\[0.1cm]
+Fachrio Ferdinanz Firdaus \hspace{1cm} 232410101043\\[0.1cm]
 
-\vspace{0.5cm}
-{\bfseries Dosen Pembimbing:}\\[0.15cm]
-[Nama Dosen Pembimbing]\\[0.1cm]
-NIP. [NIP Dosen Pembimbing]
 
 \vfill
 {\bfseries
@@ -123,33 +119,6 @@ UNIVERSITAS JEMBER \\
 2026}
 \end{center}
 \end{titlepage}
-
-% ===================== ABSTRAK =====================
-\chapter*{ABSTRAK}
-\addcontentsline{toc}{chapter}{ABSTRAK}
-
-Final project ini mengimplementasikan arsitektur \textit{read-write splitting}
-pada PostgreSQL menggunakan Pgpool-II sebagai \textit{middleware} untuk
-aplikasi Komposin --- sebuah platform bank sampah dan \textit{e-commerce}
-pengelolaan sampah berbasis Laravel 10. Arsitektur terdiri dari 1 (satu)
-PostgreSQL Master, 2 (dua) PostgreSQL Replica, dan 1 (satu) Pgpool-II yang
-di-\textit{deploy} menggunakan Docker Compose pada jaringan \textit{bridge}
-internal. Metode \textit{streaming replication} asinkron digunakan untuk
-menjaga sinkronisasi data dari Master ke Replica. Pgpool-II dikonfigurasi
-dengan \texttt{master\_slave\_mode} dan \texttt{load\_balance\_mode} untuk
-memisahkan query \textit{write} (\texttt{INSERT}, \texttt{UPDATE},
-\texttt{DELETE}) ke Master dan query \textit{read} (\texttt{SELECT}) ke
-Replica secara transparan. Hasil pengujian menunjukkan bahwa mekanisme
-\textit{read-write splitting} berhasil memisahkan beban query, \textit{load
-balancing} mendistribusikan query \texttt{SELECT} secara merata ke kedua
-Replica, dan sistem tetap beroperasi ketika salah satu Replica dimatikan
-karena mekanisme \textit{health check} dan \textit{failover} Pgpool-II.
-
-\vspace{0.2cm}
-\noindent\textbf{Kata Kunci:} \textit{read-write splitting}, PostgreSQL,
-Pgpool-II, \textit{streaming replication}, \textit{load balancing},
-\textit{fault tolerance}, Docker Compose, Laravel
-
 % ===================== DAFTAR ISI =====================
 \clearpage
 \tableofcontents

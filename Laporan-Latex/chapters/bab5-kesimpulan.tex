@@ -39,7 +39,7 @@ membuktikan bahwa seluruh query \textit{write} (\texttt{INSERT},
 \texttt{UPDATE}, \texttt{DELETE}) diproses oleh PostgreSQL Master,
 sementara seluruh query \textit{read} (\texttt{SELECT})
 didistribusikan ke PostgreSQL Replica. \textit{Load balancing}
-berjalan dengan baik --- masing-masing Replica mendapat porsi query
+berjalan dengan baik, di mana masing-masing Replica mendapat porsi query
 \texttt{SELECT} yang seimbang sesuai bobot yang ditentukan
 (\texttt{backend\_weight = 1}). Master dengan bobot \texttt{0}
 sama sekali tidak menerima query \texttt{SELECT}, memastikan beban
@@ -194,6 +194,19 @@ solusinya:
         dari jaringan aplikasi. Koneksi dapat diuji dengan
         \texttt{docker exec bdt-app php artisan tinker} dan
         menjalankan query sederhana.
+    \end{itemize}
+
+    \item \textbf{Permission Denied pada Folder Unggah Gambar (/var/www/public/img).}
+    \begin{itemize}
+        \item \textbf{Penyebab:} Kontainer aplikasi Laravel (\texttt{bdt-app})
+        berjalan dengan user \texttt{www-data} untuk proses web server Nginx
+        dan PHP-FPM. Direktori \texttt{public/img} hasil \textit{copy} saat build
+        dimiliki oleh user \texttt{root}, sehingga PHP-FPM tidak memiliki izin
+        menulis data dan memicu error \textit{Unable to write in the "/var/www/public/img" directory}.
+        \item \textbf{Solusi:} Mengubah kepemilikan folder secara rekursif menjadi
+        \texttt{www-data:www-data} menggunakan perintah \texttt{chown -R} dan
+        mengatur permission menjadi \texttt{775}. Perubahan ini kemudian ditambahkan
+        ke dalam file \texttt{Dockerfile} agar terkonfigurasi secara otomatis saat build ulang.
     \end{itemize}
 \end{enumerate}
 

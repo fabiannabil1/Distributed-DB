@@ -56,8 +56,9 @@ RUN cp /var/www/.env.bdt /var/www/.env && \
     php artisan key:generate
 
 # Set permissions - MUST be after artisan commands (they create log file as root)
-RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache && \
-    chmod -R 775 /var/www/storage /var/www/bootstrap/cache
+RUN mkdir -p /var/www/public/img && \
+    chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache /var/www/public/img && \
+    chmod -R 775 /var/www/storage /var/www/bootstrap/cache /var/www/public/img
 
 # Expose port
 EXPOSE 80

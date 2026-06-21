@@ -8,8 +8,8 @@
 Perkembangan teknologi informasi yang pesat mendorong kebutuhan akan
 sistem yang mampu menangani volume data dan lalu lintas query yang
 tinggi secara efisien. Pada aplikasi \textit{e-commerce} dan sistem
-pengelolaan data seperti Komposin --- sebuah platform bank sampah dan
-\textit{e-commerce} pengelolaan sampah --- beban operasi \textit{read}
+pengelolaan data seperti Komposin (sebuah platform bank sampah dan
+\textit{e-commerce} pengelolaan sampah), beban operasi \textit{read}
 (pembacaan data) umumnya jauh lebih tinggi dibandingkan operasi
 \textit{write} (penulisan data). Pengguna lebih sering melakukan
 pencarian produk, melihat katalog, membaca artikel, dan mengecek
@@ -22,8 +22,8 @@ komputasi dialokasikan secara proporsional terhadap jenis beban yang
 dominan.
 
 Apabila hanya menggunakan satu \textit{server} database (PostgreSQL
-\textit{single instance}), seluruh beban query --- baik \textit{read}
-maupun \textit{write} --- diproses oleh \textit{server} yang sama.
+\textit{single instance}), seluruh beban query, baik \textit{read}
+maupun \textit{write}, diproses oleh \textit{server} yang sama.
 Kondisi ini menimbulkan beberapa permasalahan, antara lain:
 
 \begin{enumerate}
@@ -54,7 +54,7 @@ database}. Mekanisme ini memisahkan query \textit{write}
 \textbf{PostgreSQL Master}, dan query \textit{read} (\texttt{SELECT})
 yang didistribusikan ke satu atau lebih \textbf{PostgreSQL Replica}.
 Sebagai \textit{middleware} yang mengatur distribusi query, digunakan
-\textbf{Pgpool-II} --- sebuah \textit{connection pooler} dan
+\textbf{Pgpool-II}, sebuah \textit{connection pooler} dan
 \textit{load balancer} yang secara \textit{transparan} mengarahkan
 query ke \textit{backend} yang tepat berdasarkan jenis operasinya.
 Pgpool-II juga menyediakan mekanisme \textit{health check} dan
@@ -145,7 +145,7 @@ direproduksi dengan mudah di lingkungan lain. Replikasi menggunakan
 metode \textbf{\textit{streaming replication}} secara
 \textbf{asinkron} yang sudah tersedia secara \textit{native} pada
 PostgreSQL 16. Aplikasi \textbf{tidak} terhubung langsung ke
-PostgreSQL Master maupun Replica --- seluruh koneksi database
+PostgreSQL Master maupun Replica. Seluruh koneksi database
 diarahkan ke Pgpool-II sebagai \textit{single entry point}.
 Pendekatan ini memastikan bahwa mekanisme \textit{read-write
 splitting} berjalan secara transparan tanpa modifikasi kode aplikasi.
