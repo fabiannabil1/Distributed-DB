@@ -20,11 +20,9 @@ services:
       bdt-network:
         ipv4_address: 172.25.0.10
     command: >
-      postgres
-      -c config_file=/etc/postgresql/custom/postgresql.conf
-      -c hba_file=/etc/postgresql/custom/pg_hba.conf
+      postgres -c config_file=/etc/postgresql/custom/postgresql.conf -c hba_file=/etc/postgresql/custom/pg_hba.conf
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d bdt_app"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d bdt_app" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,7 +47,7 @@ services:
     networks:
       bdt-network:
         ipv4_address: 172.25.0.11
-    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    entrypoint: [ "/bin/bash", "/entrypoint.sh" ]
     depends_on:
       pg-master:
         condition: service_healthy
@@ -73,7 +71,7 @@ services:
     networks:
       bdt-network:
         ipv4_address: 172.25.0.12
-    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    entrypoint: [ "/bin/bash", "/entrypoint.sh" ]
     depends_on:
       pg-master:
         condition: service_healthy
@@ -189,6 +187,8 @@ services:
       DB_PASSWORD: bdtpassword
     ports:
       - "8080:80"
+    volumes:
+      - app_public_img:/var/www/public/img
     networks:
       bdt-network:
         ipv4_address: 172.25.0.30
@@ -209,4 +209,6 @@ volumes:
   pg_replica1_data:
     driver: local
   pg_replica2_data:
+    driver: local
+  app_public_img:
     driver: local
