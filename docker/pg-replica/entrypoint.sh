@@ -21,7 +21,8 @@ if [ -f "$SENTINEL" ]; then
     # already cleaned above. Just start.
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting PostgreSQL replica..."
     exec docker-entrypoint.sh \
-        -c config_file=/etc/postgresql/custom/postgresql.conf
+        -c config_file=/etc/postgresql/custom/postgresql.conf \
+        -c hba_file=/etc/postgresql/custom/pg_hba.conf
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running pg_basebackup from pg-master..."
 
@@ -48,5 +49,6 @@ else
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] pg_basebackup complete. Starting replica..."
     exec docker-entrypoint.sh \
-        -c config_file=/etc/postgresql/custom/postgresql.conf
+        -c config_file=/etc/postgresql/custom/postgresql.conf \
+        -c hba_file=/etc/postgresql/custom/pg_hba.conf
 fi

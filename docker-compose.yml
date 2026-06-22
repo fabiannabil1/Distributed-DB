@@ -41,6 +41,7 @@ services:
     volumes:
       - pg_replica1_data:/var/lib/postgresql/data
       - ./docker/pg-replica/postgresql.conf:/etc/postgresql/custom/postgresql.conf:ro
+      - ./docker/pg-master/pg_hba.conf:/etc/postgresql/custom/pg_hba.conf:ro
       - ./docker/pg-replica/entrypoint.sh:/entrypoint.sh:ro
     ports:
       - "5434:5432"
@@ -65,6 +66,7 @@ services:
     volumes:
       - pg_replica2_data:/var/lib/postgresql/data
       - ./docker/pg-replica/postgresql.conf:/etc/postgresql/custom/postgresql.conf:ro
+      - ./docker/pg-master/pg_hba.conf:/etc/postgresql/custom/pg_hba.conf:ro
       - ./docker/pg-replica/entrypoint.sh:/entrypoint.sh:ro
     ports:
       - "5435:5432"
